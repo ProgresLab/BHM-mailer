@@ -1,115 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Odbiorcy kampanii - BHM Chemicals Mailing Tool{% endblock %}
 {% block content %}
-<section class="page-head">
-  <h1>Wybór odbiorców</h1>
-  <p>{{ campaign.name }} · {{ campaign.language }} · <span class="badge badge-{{ campaign.status }}">{{ campaign.status }}</span></p>
-</section>
-
-{% if campaign.status == 'sending' %}
-  <div class="alert alert-error">Kampania jest już w trakcie wysyłki. Ponowne uruchomienie jest zablokowane.</div>
-{% elif campaign.status != 'approved' %}
-  <div class="alert alert-error">Kampania musi mieć status approved, aby dodać odbiorców i zapisać wysyłkę.</div>
-{% endif %}
-
-{% if confirm_count %}
-  <section class="panel confirm-panel">
-    <h2>Potwierdzenie wysyłki</h2>
-    <p>Wybrani aktywni odbiorcy: <strong>{{ confirm_count }}</strong>.</p>
-    <form method="post" class="actions">
-      {% if confirm_error %}
-        <div class="alert alert-error full-width">{{ confirm_error }}</div>
-      {% endif %}
-      {% if large_campaign_warning %}
-        <div class="alert full-width">
-          Large campaign: SMTP acceptance does not guarantee delivery. Use Message Trace CSV after sending to verify final delivery.
-        </div>
-      {% endif %}
-      <input type="hidden" name="confirmed" value="1">
-      {% for contact_id in confirm_contact_ids %}
-        <input type="hidden" name="contact_ids" value="{{ contact_id }}">
-      {% endfor %}
-      {% if large_campaign_ack_required %}
-        <label class="checkline large-ack">
-          <input type="checkbox" name="large_delivery_ack" value="1" required>
-          I understand accepted_by_smtp is not final delivery.
-        </label>
-      {% endif %}
-      <button class="button" type="submit" {% if campaign.status != 'approved' %}disabled{% endif %}>Wyślij</button>
-      <a class="button button-secondary" href="/campaigns/{{ campaign.id }}/recipients">Wróć do wyboru</a>
-    </form>
-  </section>
-{% endif %}
-
-<section class="panel">
-  <form method="get" class="filters">
-    <label>
-      Grupa
-      <select name="country_group">
-        <option value="">Wszystkie</option>
-        <option value="PL" {% if filters.country_group == 'PL' %}selected{% endif %}>Polska</option>
-        <option value="INTERNATIONAL" {% if filters.country_group == 'INTERNATIONAL' %}selected{% endif %}>Poza Polską</option>
-      </select>
-    </label>
-    <label>
-      Język
-      <select name="language">
-        <option value="">Wszystkie</option>
-        <option value="pl" {% if filters.language == 'pl' %}selected{% endif %}>pl</option>
-        <option value="en" {% if filters.language == 'en' %}selected{% endif %}>en</option>
-      </select>
-    </label>
-    <label>
-      Active only
-      <select name="active_only">
-        <option value="1" {% if filters.active_only == '1' %}selected{% endif %}>Tak</option>
-        <option value="0" {% if filters.active_only == '0' %}selected{% endif %}>Nie</option>
-      </select>
-    </label>
-    <label>
-      Search
-      <input type="search" name="search" value="{{ filters.search }}">
-    </label>
-    <button class="button button-secondary" type="submit">Filtruj</button>
-  </form>
-</section>
-
-<section class="panel">
-  <form method="post">
-    <div class="bulkbar">
-      <label class="checkline"><input type="checkbox" data-select-all="recipient-checkbox"> Zaznacz widoczne</label>
-      <span class="muted"><span data-selected-count>0</span> zaznaczonych</span>
-      <button class="button" type="submit" {% if campaign.status != 'approved' %}disabled{% endif %}>Przejdź do potwierdzenia</button>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th></th>
-            <th>Email</th>
-            <th>Firma</th>
-            <th>Grupa</th>
-            <th>Język</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for contact in contacts %}
-            {% set disabled = contact.status in ['unsubscribed', 'invalid', 'bounced'] %}
-            <tr class="{% if disabled %}disabled-row{% endif %}">
-              <td><input class="recipient-checkbox" type="checkbox" name="contact_ids" value="{{ contact.id }}" {% if disabled %}disabled{% endif %}></td>
-              <td>{{ contact.email }}</td>
-              <td>{{ contact.company_name or '' }}</td>
-              <td>{{ contact.country_group }}</td>
-              <td>{{ contact.language }}</td>
-              <td><span class="badge badge-{{ contact.status }}">{{ contact.status }}</span></td>
-            </tr>
-          {% else %}
-            <tr><td colspan="6" class="empty">Brak odbiorców dla wybranych filtrów.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </form>
-</section>
+<section class="page-head"><p class="eyebrow">KAMPANIA / 03 — ODBIORCY</p><h1>Wybór odbiorców</h1><p>{{ campaign.name }} · {{ campaign.language|upper }} · {{ campaign.subject }}</p></section>
+{% if campaign.status != 'approved' %}<p class="alert">Selekcja jest dostępna wyłącznie przed rozpoczęciem zatwierdzonej kampanii.</p>{% endif %}
+<section class="panel"><form method="get" class="filters"><label>Grupa<select name="country_group"><option value="">Wszystkie</option>{% for v in ['PL','INTERNATIONAL'] %}<option {% if filters.country_group == v %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></label><label>Język<select name="language"><option value="">Wszystkie</option>{% for v in ['pl','en'] %}<option {% if filters.language == v %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+<label>Status<select name="active_only"><option value="1" {% if filters.active_only == '1' %}selected{% endif %}>Tylko aktywni</option><option value="0" {% if filters.active_only == '0' %}selected{% endif %}>Wszystkie statusy</option></select></label><label>Widok<select name="selected_only"><option value="0">Wyniki filtra</option><option value="1" {% if filters.selected_only == '1' %}selected{% endif %}>Tylko wybrani</option></select></label><label>Szukaj<input type="search" name="search" value="{{ filters.search }}"></label><button class="button button-secondary" type="submit">Filtruj</button></form></section>
+<section class="panel" data-selection-url="/campaigns/{{ campaign.id }}/selection" data-selection-count="{{ selected_count }}" data-selection-eligible="{{ eligible_count }}" data-selection-editable="{{ 'true' if campaign.status == 'approved' else 'false' }}">
+<div class="bulkbar"><label class="checkline"><input type="checkbox" data-visible-all {% if campaign.status != 'approved' %}disabled{% endif %}>Zaznacz widoczne</label><strong><span data-pending-selected>0</span> zaznaczonych na tej stronie</strong><button type="button" class="button" data-selection-add disabled>Dodaj do kampanii</button></div>
+<div class="bulkbar"><strong><span data-total-selected>{{ selected_count }}</span> / 1000 dodanych</strong><a class="button button-secondary" href="/campaigns/{{ campaign.id }}/summary" data-selection-summary aria-disabled="{{ 'true' if not eligible_count or campaign.status != 'approved' else 'false' }}">Przejdź do podsumowania</a><button type="button" class="button button-secondary" data-selection-clear {% if campaign.status != 'approved' %}disabled{% endif %}>Wyczyść listę odbiorców kampanii</button></div>
+<p class="muted">Zaznacz kontakty → Dodaj do kampanii → wybierz kolejne → Podsumowanie. Zaznaczenie jest tymczasowe; dopiero „Dodaj do kampanii” zapisuje je w SQLite. Dodani odbiorcy pozostają na liście po zmianie filtrów, strony i odświeżeniu.</p><p class="muted">Strona {{ page }} / {{ pages }} · {{ total }} wyników · maksymalnie 500 na stronie. Dodanych odbiorców usuniesz w podsumowaniu.</p><p role="status" aria-live="polite" data-selection-message></p><nav class="pagination" aria-label="Strony odbiorców">{% for number,url in page_links %}<a href="{{ url }}" {% if number == page %}aria-current="page"{% endif %}>{{ number }}</a>{% endfor %}</nav>
+<div class="table-wrap"><table><thead><tr><th>Wybierz</th><th>E-mail</th><th>Firma</th><th>Grupa</th><th>Język</th><th>Status</th></tr></thead><tbody>{% for contact in contacts %}<tr><td><input type="checkbox" data-recipient value="{{ contact.id }}" data-eligible="{{ 'true' if contact.status == 'active' else 'false' }}" aria-label="Wybierz {{ contact.email }}" {% if contact.id in selected %}checked{% endif %} {% if contact.id in selected or contact.status != 'active' or campaign.status != 'approved' %}disabled{% endif %}><span data-membership>{{ 'Dodano' if contact.id in selected else '' }}</span></td><td>{{ contact.email }}</td><td>{{ contact.company_name or '' }}</td><td>{{ contact.country_group }}</td><td>{{ contact.language }}</td><td><span class="badge badge-{{ contact.status }}">{{ contact.status }}</span></td></tr>{% else %}<tr><td colspan="6">Brak wyników.</td></tr>{% endfor %}</tbody></table></div>
+<nav class="pagination" aria-label="Strony odbiorców — dół">{% for number,url in page_links %}<a href="{{ url }}" {% if number == page %}aria-current="page"{% endif %}>{{ number }}</a>{% endfor %}</nav></section>
 {% endblock %}

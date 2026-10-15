@@ -24,8 +24,8 @@
       <main class="main">
         <header class="topbar">
           <div>
-            <strong>Local admin panel</strong>
-            <span>SQLite + dry-run SMTP</span>
+            <strong>Lokalny panel kampanii</strong>
+            <span>Przygotowanie · kontrola · historia</span>
           </div>
         </header>
         {% if request.query_params.get('message') %}
@@ -34,6 +34,6 @@
         {% block content %}{% endblock %}
       </main>
     </div>
-    <script src="{{ url_for('static', path='/app.js') }}"></script>
+    <script src="{{ url_for('static', path='/app.js') }}?v=recipients-20261015-1"></script>
   </body>
 </html>

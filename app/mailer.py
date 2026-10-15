@@ -11,6 +11,7 @@ import hmac
 import os
 import re
 import smtplib
+import ssl
 import sqlite3
 import time
 from urllib.parse import urlencode
@@ -154,7 +155,7 @@ def get_mail_settings() -> MailSettings:
         public_unsubscribe_base_url=os.getenv("PUBLIC_UNSUBSCRIBE_BASE_URL", "").strip().rstrip("/"),
         unsubscribe_secret=os.getenv("UNSUBSCRIBE_SECRET", "").strip(),
         admin_notification_email=os.getenv("ADMIN_NOTIFICATION_EMAIL", "").strip(),
-        email_send_delay_seconds=env_float("EMAIL_SEND_DELAY_SECONDS", 10.0),
+        email_send_delay_seconds=20.0,
         dry_run_skip_delay=env_bool("DRY_RUN_SKIP_DELAY", False),
     )
 
@@ -394,13 +395,23 @@ def fetch_contacts_by_ids(conn: sqlite3.Connection, contact_ids: list[int]) -> d
     return contacts
 
 
-def prepare_campaign_send(campaign_id: int, contact_ids: list[int]) -> dict[str, object]:
+def prepare_campaign_send(campaign_id: int, contact_ids: list[int], mode: str = "dry_run") -> dict[str, object]:
+    if mode not in {"dry_run", "smtp"}:
+        raise ValueError("Nieprawidłowy tryb wysyłki.")
     unique_ids = list(dict.fromkeys(contact_ids))
+    if len(unique_ids) > 1000:
+        raise ValueError("Limit kampanii wynosi 1000 odbiorców.")
     if not unique_ids:
         return {"started": False, "message": "No recipients selected.", "send_ids": [], "recipient_count": 0}
 
     settings = get_mail_settings()
     with get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        owner = conn.execute("SELECT campaign_id FROM smtp_control WHERE id=1").fetchone()
+        if owner["campaign_id"] is not None:
+            raise ValueError("Konto jest zarezerwowane przez aktywną lub wstrzymaną kampanię.")
+        if conn.execute("SELECT 1 FROM email_sends WHERE campaign_id=? LIMIT 1", (campaign_id,)).fetchone():
+            raise ValueError("Ta kampania ma już snapshoty. Użyj panelu wznowienia.")
         campaign = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
         if campaign is None:
             raise ValueError("Campaign not found.")
@@ -424,7 +435,7 @@ def prepare_campaign_send(campaign_id: int, contact_ids: list[int]) -> dict[str,
                 "recipient_count": 0,
             }
 
-        configuration_error = smtp_send_configuration_error(settings)
+        configuration_error = smtp_send_configuration_error(settings) if mode == "smtp" else None
         if configuration_error:
             return {
                 "started": False,
@@ -433,7 +444,9 @@ def prepare_campaign_send(campaign_id: int, contact_ids: list[int]) -> dict[str,
                 "recipient_count": len(active_contacts),
             }
 
-        warning = public_unsubscribe_url_warning(settings)
+        if mode == "smtp" and not smtp_is_configured(settings):
+            raise ValueError("SMTP nie jest włączone lub skonfigurowane.")
+        warning = public_unsubscribe_url_warning(settings) if mode == "smtp" else None
         if warning and len(active_contacts) > 1:
             return {
                 "started": False,
@@ -455,6 +468,10 @@ def prepare_campaign_send(campaign_id: int, contact_ids: list[int]) -> dict[str,
                 "recipient_count": 0,
             }
 
+        from .assets import asset_path
+        banner = row_value(campaign, 'banner_asset')
+        if banner and not asset_path(banner).is_file():
+            raise ValueError("Brak zapisanego banera kampanii.")
         language = campaign_language(campaign)
         subject = campaign_subject(campaign)
         html_template = campaign_html(campaign)
@@ -487,6 +504,13 @@ def prepare_campaign_send(campaign_id: int, contact_ids: list[int]) -> dict[str,
                     "pending",
                 )
             )
+        conn.execute("UPDATE email_sends SET banner_asset=? WHERE campaign_id=?", (banner or None, campaign_id))
+        now_epoch = time.time()
+        conn.execute("INSERT INTO campaign_execution(campaign_id,state,mode,started,updated) VALUES(?,'running',?,?,?)",
+                     (campaign_id, mode, now_epoch, now_epoch))
+        from .worker import identity_fingerprint
+        conn.execute('UPDATE campaign_execution SET identity_fingerprint=? WHERE campaign_id=?',(identity_fingerprint(settings),campaign_id))
+        conn.execute("UPDATE smtp_control SET campaign_id=? WHERE id=1", (campaign_id,))
         conn.commit()
 
     return {
@@ -498,143 +522,11 @@ def prepare_campaign_send(campaign_id: int, contact_ids: list[int]) -> dict[str,
 
 
 def send_pending_campaign(campaign_id: int, send_ids: list[int] | None = None) -> None:
-    settings = get_mail_settings()
-    dry_run = not smtp_is_configured(settings)
-    configuration_error = smtp_send_configuration_error(settings)
-    send_id_filter = {int(send_id) for send_id in send_ids or []} if send_ids is not None else None
-    with get_connection() as conn:
-        campaign = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
-        if campaign is None or campaign["status"] != "sending":
-            return
-
-        all_sends = conn.execute(
-            """
-            SELECT s.*, c.status AS contact_status, c.id AS live_contact_id
-            FROM email_sends s
-            LEFT JOIN contacts c ON c.id = s.contact_id
-            WHERE s.campaign_id = ? AND s.status = 'pending'
-            ORDER BY s.id ASC
-            """,
-            (campaign_id,),
-        ).fetchall()
-        sends = [
-            send
-            for send in all_sends
-            if send_id_filter is None or int(send["id"]) in send_id_filter
-        ]
-
-        if configuration_error:
-            for send in sends:
-                identity = prepare_message_identity(settings, send["email"])
-                mark_send_started(conn, send["id"])
-                update_send_status(
-                    conn,
-                    send["id"],
-                    "smtp_failed",
-                    error_message=configuration_error,
-                    last_error=configuration_error,
-                    final_status_at=utc_now(),
-                    **identity_update_kwargs(identity),
-                )
-            finalize_campaign_status(conn, campaign_id)
-            conn.commit()
-            return
-
-        for index, send in enumerate(sends):
-            contact_status = send["contact_status"] or "invalid"
-            if contact_status == "unsubscribed":
-                update_send_status(
-                    conn,
-                    send["id"],
-                    "skipped_unsubscribed",
-                    error_message="Contact is unsubscribed.",
-                    last_error="Contact is unsubscribed.",
-                    final_status_at=utc_now(),
-                )
-            elif contact_status in {"bounced", "invalid"} or send["live_contact_id"] is None:
-                error_text = f"Contact status is {contact_status}."
-                update_send_status(
-                    conn,
-                    send["id"],
-                    "skipped_invalid",
-                    error_message=error_text,
-                    last_error=error_text,
-                    final_status_at=utc_now(),
-                )
-            elif dry_run:
-                identity = prepare_message_identity(settings, send["email"])
-                mark_send_started(conn, send["id"])
-                now = utc_now()
-                update_send_status(
-                    conn,
-                    send["id"],
-                    "dry_run",
-                    smtp_response="SMTP not configured - dry run saved",
-                    sent_at=now,
-                    final_status_at=now,
-                    smtp_message_id=identity.message_id,
-                    **identity_update_kwargs(identity),
-                )
-                mark_contact_sent(conn, send["contact_id"], now)
-            else:
-                identity = prepare_message_identity(settings, send["email"])
-                mark_send_started(conn, send["id"])
-                conn.commit()
-                try:
-                    response = send_one_email(
-                        settings,
-                        send["email"],
-                        send["subject"],
-                        send["text_snapshot"],
-                        send["html_snapshot"],
-                        identity=identity,
-                    )
-                    now = utc_now()
-                    update_send_status(
-                        conn,
-                        send["id"],
-                        "accepted_by_smtp",
-                        smtp_response=response.smtp_response,
-                        smtp_code=response.smtp_code,
-                        smtp_message_id=response.smtp_message_id,
-                        provider_message_id=response.provider_message_id,
-                        accepted_at=now,
-                        sent_at=now,
-                        message_id=response.message_id,
-                        smtp_user=response.smtp_user,
-                        header_from=response.header_from,
-                        reply_to=response.reply_to,
-                        envelope_from=response.envelope_from,
-                        envelope_to=response.envelope_to,
-                    )
-                    mark_contact_sent(conn, send["contact_id"], now)
-                except Exception as exc:  # noqa: BLE001 - SMTP libraries expose several exception classes.
-                    error_text = smtp_exception_text(exc)
-                    proposed_status = classify_smtp_failure(error_text)
-                    update_send_status(
-                        conn,
-                        send["id"],
-                        proposed_status,
-                        smtp_code=extract_smtp_code(error_text),
-                        error_message=error_text,
-                        last_error=error_text,
-                        final_status_at=utc_now(),
-                        smtp_message_id=identity.message_id,
-                        **identity_update_kwargs(identity),
-                    )
-                    if looks_like_permanent_recipient_failure(error_text):
-                        contact_status = "invalid" if looks_like_invalid_address(error_text) else "bounced"
-                        conn.execute(
-                            "UPDATE contacts SET status = ?, updated_at = ? WHERE id = ?",
-                            (contact_status, utc_now(), send["contact_id"]),
-                        )
-            conn.commit()
-
-            if index < len(sends) - 1 and should_delay(settings, dry_run):
-                time.sleep(settings.email_send_delay_seconds)
-
-        finalize_campaign_status(conn, campaign_id)
-        conn.commit()
+    # Compatibility entry point: delivery is owned exclusively by the singleton worker.
+    from .worker import manager
+    if not manager.available:
+        raise ValueError("Worker niedostępny. Uruchom pojedynczy proces aplikacji.")
+    manager.wake.set()
 
 
 def mark_send_started(conn: sqlite3.Connection, send_id: int) -> None:
@@ -672,8 +564,8 @@ def finalize_campaign_status(conn: sqlite3.Connection, campaign_id: int) -> str:
         return "sending"
     if int(row["open_count"] or 0) > 0:
         current = conn.execute("SELECT status FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
-        if current and current["status"] != "stopped":
-            conn.execute("UPDATE campaigns SET status = 'sending' WHERE id = ?", (campaign_id,))
+        if current and current["status"] not in {"sending", "stopped"}:
+            return current["status"]
         return "sending"
 
     status = "completed_with_errors" if int(row["error_count"] or 0) > 0 else "completed"
@@ -865,6 +757,7 @@ def send_one_email(
     text_content: str,
     html_content: str,
     identity: SenderIdentity | None = None,
+    banner_asset: str | None = None,
 ) -> SmtpSendResult:
     identity = identity or prepare_message_identity(settings, to_email)
     configuration_error = smtp_send_configuration_error(settings)
@@ -883,13 +776,20 @@ def send_one_email(
     alternative.attach(MIMEText(html_content, "html", "utf-8"))
     message.attach(alternative)
     attach_inline_logo(message, html_content)
+    if banner_asset:
+        from .assets import asset_path, banner_cid
+        image = MIMEImage(asset_path(banner_asset).read_bytes())
+        image.add_header('Content-ID', f'<{banner_cid(banner_asset)}>')
+        image.add_header('Content-Disposition', 'inline', filename='campaign-banner.' + banner_asset.rsplit('.', 1)[1])
+        message.attach(image)
 
     use_ssl = smtp_uses_ssl(settings)
     smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
-    with smtp_class(settings.smtp_host, settings.smtp_port, timeout=30) as smtp:
+    tls_kwargs = {"context": ssl.create_default_context()} if use_ssl else {}
+    with smtp_class(settings.smtp_host, settings.smtp_port, timeout=30, **tls_kwargs) as smtp:
         smtp.ehlo()
         if not use_ssl and settings.smtp_use_tls:
-            smtp.starttls()
+            smtp.starttls(context=ssl.create_default_context())
             smtp.ehlo()
         if settings.smtp_user or settings.smtp_password:
             smtp.login(settings.smtp_user, settings.smtp_password)
@@ -1048,26 +948,9 @@ def maybe_send_unsubscribe_notification(
     if not settings.admin_notification_email or not smtp_is_configured(settings):
         return False
 
-    warsaw_now = warsaw_datetime_text()
-    body = (
-        f"email: {email}\n"
-        f"date/time Europe/Warsaw: {warsaw_now}\n"
-        f"campaign_id: {campaign_id or ''}\n"
-    )
-    try:
-        send_one_email(
-            settings,
-            settings.admin_notification_email,
-            f"Unsubscribe: {email}",
-            body,
-            f"<pre>{body}</pre>",
-        )
-    except Exception:
-        return False
-
-    conn.execute(
-        "UPDATE unsubscribe_events SET notification_sent = 1 WHERE id = ?",
-        (event_id,),
-    )
+    # Durable notification; only the singleton worker may use this SMTP account.
+    conn.execute("UPDATE unsubscribe_events SET notification_status='queued' WHERE id=? AND notification_sent=0 AND notification_status='pending'", (event_id,))
     conn.commit()
-    return True
+    from .worker import manager
+    manager.wake.set()
+    return False  # queued, not yet accepted by SMTP

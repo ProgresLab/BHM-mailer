@@ -1,37 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Podgląd kampanii - BHM Chemicals Mailing Tool{% endblock %}
 {% block content %}
-<section class="page-head">
-  <h1>Podgląd kampanii</h1>
-  <p>{{ campaign.name }} · {{ campaign.language }} · <span class="badge badge-{{ campaign.status }}">{{ campaign.status }}</span></p>
-</section>
-
-<section class="panel">
-  <div class="panel-head">
-    <h2>Akcje</h2>
-    <div class="actions">
-      {% if campaign.status == 'draft' %}
-        <form method="post" action="/campaigns/{{ campaign.id }}/approve">
-          <button class="button" type="submit">Zatwierdź kampanię</button>
-        </form>
-      {% elif campaign.status == 'approved' %}
-        <a class="button" href="/campaigns/{{ campaign.id }}/recipients">Wybierz odbiorców</a>
-      {% elif campaign.status == 'sending' %}
-        <a class="button button-secondary" href="/history/{{ campaign.id }}">Status wysyłki</a>
-      {% endif %}
-      <a class="button button-secondary" href="/history/{{ campaign.id }}">Historia</a>
-    </div>
-  </div>
-</section>
-
-<section class="preview-grid single">
-  <div class="panel">
-    <h2>HTML preview</h2>
-    <p><strong>Subject:</strong> {{ campaign.subject or campaign.name }}</p>
-    <p><strong>Language:</strong> {{ campaign.language }}</p>
-    <iframe class="email-preview" sandbox srcdoc="{{ campaign.html | unsubscribe_preview | e }}"></iframe>
-    <h3>Plain text</h3>
-    <pre class="plain-text">{{ campaign.text | unsubscribe_preview }}</pre>
-  </div>
-</section>
+<section class="page-head"><p class="eyebrow">KAMPANIA / 02 — PODGLĄD</p><h1>{{ campaign.name }}</h1><p>{{ campaign.language|upper }} · {{ campaign.status }} · treść gotowa do weryfikacji</p></section>
+<section class="panel"><p><strong>Subject:</strong> {{ campaign.subject or campaign.name }}</p><p><strong>CTA:</strong> {{ campaign.cta_label or 'Brak' }} {% if campaign.cta_url %}→ {{ campaign.cta_url }}{% endif %}</p><div class="actions">
+{% if campaign.status == 'draft' %}<a class="button button-secondary" href="/campaigns/{{ campaign.id }}/edit">Wróć do edycji</a><form method="post" action="/campaigns/{{ campaign.id }}/approve"><button class="button" type="submit">Zatwierdź i wybierz odbiorców →</button></form>
+{% elif campaign.status == 'approved' %}<form method="post" action="/campaigns/{{ campaign.id }}/reopen"><button class="button button-secondary">Wróć do draftu</button></form><a class="button" href="/campaigns/{{ campaign.id }}/recipients">Wybierz odbiorców →</a>
+{% else %}<a class="button" href="/campaigns/{{ campaign.id }}/monitor">Monitor kampanii</a>{% endif %}<a class="button button-secondary" href="/history/{{ campaign.id }}">Historia</a></div></section>
+<section class="panel"><div class="panel-head"><h2>Podgląd e-maila</h2><div class="actions"><button type="button" class="button button-secondary" data-preview-size="desktop">Desktop</button><button type="button" class="button button-secondary" data-preview-size="mobile">Mobile 360 px</button><button type="button" class="button button-secondary" data-preview-images>Ukryj obrazy</button></div></div>
+<p class="muted">Podgląd w przeglądarce. Link wypisu zostanie podpisany indywidualnie dla każdego odbiorcy.</p><div class="email-stage"><iframe title="Podgląd wiadomości HTML" class="email-preview" sandbox="allow-same-origin" data-preview-frame srcdoc="{{ campaign.html | unsubscribe_preview | e }}"></iframe></div><details><summary>Plain-text fallback</summary><pre class="plain-text">{{ campaign.text | unsubscribe_preview }}</pre></details></section>
 {% endblock %}

@@ -126,47 +126,51 @@ def import_from_xlsx(path: Path, mode: str | None = "AUTO", source: str | None =
     invalid: list[str] = []
     source_name = source or path.name
 
-    for worksheet in workbook.worksheets:
-        rows = worksheet.iter_rows(values_only=True)
-        columns: dict[str, int] = {}
-        for row in rows:
-            if not any(cell is not None and str(cell).strip() for cell in row):
-                continue
-            possible_columns = detect_columns(row)
-            if "email" in possible_columns:
-                columns = possible_columns
-                break
-        if not columns:
-            continue
-
-        for row in rows:
-            values = list(row)
-            email_cell = values[columns["email"]] if columns["email"] < len(values) else None
-            emails, bad_tokens = split_product_like_cells(email_cell)
-            invalid.extend(bad_tokens)
-            if not emails:
+    try:
+        for worksheet in workbook.worksheets:
+            rows = worksheet.iter_rows(values_only=True)
+            columns: dict[str, int] = {}
+            for row in rows:
+                if not any(cell is not None and str(cell).strip() for cell in row):
+                    continue
+                possible_columns = detect_columns(row)
+                if "email" in possible_columns:
+                    columns = possible_columns
+                    break
+            if not columns:
                 continue
 
-            company_name = get_column_value(values, columns, "company_name")
-            industry = get_column_value(values, columns, "industry")
-            notes = get_column_value(values, columns, "notes")
-            last_sent_at = format_date_value(get_raw_column_value(values, columns, "last_sent_at"))
+            for row in rows:
+                values = list(row)
+                email_cell = values[columns["email"]] if columns["email"] < len(values) else None
+                emails, bad_tokens = split_product_like_cells(email_cell)
+                invalid.extend(bad_tokens)
+                if not emails:
+                    continue
 
-            for email in emails:
-                group, language = classify_group(mode, email, worksheet.title)
-                candidates.append(
-                    ImportCandidate(
-                        email=email,
-                        company_name=company_name,
-                        industry=industry,
-                        country_group=group,
-                        language=language,
-                        source=source_name,
-                        source_sheet=worksheet.title,
-                        notes=notes,
-                        last_sent_at=last_sent_at,
+                company_name = get_column_value(values, columns, "company_name")
+                industry = get_column_value(values, columns, "industry")
+                notes = get_column_value(values, columns, "notes")
+                last_sent_at = format_date_value(get_raw_column_value(values, columns, "last_sent_at"))
+
+                for email in emails:
+                    group, language = classify_group(mode, email, worksheet.title)
+                    candidates.append(
+                        ImportCandidate(
+                            email=email,
+                            company_name=company_name,
+                            industry=industry,
+                            country_group=group,
+                            language=language,
+                            source=source_name,
+                            source_sheet=worksheet.title,
+                            notes=notes,
+                            last_sent_at=last_sent_at,
+                        )
                     )
-                )
+
+    finally:
+        workbook.close()
 
     return upsert_contacts(candidates, invalid)
 

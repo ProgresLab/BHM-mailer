@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from html import escape
+from .rich_text import email_body, html_to_text, safe_url
+from .assets import banner_cid
 from pathlib import Path
 import re
 
 
+COMPANY_URL = "https://bhm-chemicals.com/"
 CONTACT_EMAIL = "info@bhm-chemicals.com"
 EMAIL_LOGO_CID = "bhm-chemicals-logo"
 EMAIL_LOGO_SRC = f"cid:{EMAIL_LOGO_CID}"
@@ -56,7 +59,7 @@ def render_body_html(body: str | None) -> str:
         lines = [escape(line.strip()) for line in paragraph.split("\n")]
         rendered.append(
             f"""
-            <p style="margin:0 0 18px 0;color:#10212B;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.65;">
+            <p style="margin:0 0 18px 0;color:#10212B;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:16px;line-height:1.65;">
               {'<br>'.join(lines)}
             </p>
             """.strip()
@@ -76,7 +79,7 @@ def render_products_html(products: list[str], language: str) -> str:
               <td style="padding:0 0 10px 0;">
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;border:1px solid #D9E1E8;background:#FFFFFF;">
                   <tr>
-                    <td style="padding:14px 16px;color:#0B1F2A;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.45;">
+                    <td style="padding:14px 16px;color:#0B1F2A;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:15px;line-height:1.45;">
                       {escape(product)}
                     </td>
                   </tr>
@@ -88,7 +91,7 @@ def render_products_html(products: list[str], language: str) -> str:
     return f"""
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:22px 0 6px 0;">
       <tr>
-        <td style="padding:0 0 12px 0;color:#0B1F2A;font-family:Arial,Helvetica,sans-serif;font-size:17px;font-weight:bold;line-height:1.3;">
+        <td style="padding:0 0 12px 0;color:#0B1F2A;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:17px;font-weight:bold;line-height:1.3;">
           {title}
         </td>
       </tr>
@@ -98,13 +101,13 @@ def render_products_html(products: list[str], language: str) -> str:
 
 
 def render_cta_html(label: str | None, url: str | None) -> str:
-    if not label or not url:
+    if not label or not safe_url(url or ""):
         return ""
     return f"""
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:26px 0 4px 0;">
       <tr>
-        <td bgcolor="#0A6B3D" style="border-radius:4px;">
-          <a href="{escape(url, quote=True)}" style="display:inline-block;padding:13px 20px;color:#FFFFFF;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;text-decoration:none;border-radius:4px;">
+        <td bgcolor="#11263A" style="padding:13px 20px;border-radius:4px;">
+          <a href="{escape(url, quote=True)}" style="display:inline-block;color:#FFFFFF;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;text-decoration:none;border-radius:4px;">
             {escape(label)}
           </a>
         </td>
@@ -121,7 +124,7 @@ def render_text_brand_html() -> str:
     return """
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;width:100%;">
       <tr>
-        <td valign="middle" style="color:#0B1F2A;font-family:Arial,Helvetica,sans-serif;font-size:22px;line-height:1.25;font-weight:bold;letter-spacing:0;">
+        <td valign="middle" style="color:#0B1F2A;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:22px;line-height:1.25;font-weight:bold;letter-spacing:0;">
           BHM Chemicals
         </td>
       </tr>
@@ -133,7 +136,7 @@ def render_logo_brand_html() -> str:
     if not logo_is_available():
         return render_text_brand_html()
     return f"""
-    <img src="{EMAIL_LOGO_SRC}" width="260" alt="BHM Chemicals" style="display:block;width:260px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;">
+    <a href="{COMPANY_URL}"><img src="{EMAIL_LOGO_SRC}" width="260" alt="BHM Chemicals" style="display:block;width:260px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;"></a>
     """.strip()
 
 
@@ -161,7 +164,7 @@ def render_contact_html(language: str) -> str:
     return f"""
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:18px 0 0 0;background:#F4F7F9;border:1px solid #D9E1E8;">
       <tr>
-        <td style="padding:16px 18px;color:#10212B;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;">
+        <td style="padding:16px 18px;color:#10212B;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;">
           {text} <a href="mailto:{CONTACT_EMAIL}" style="color:#0A6B3D;text-decoration:underline;">{CONTACT_EMAIL}</a>
         </td>
       </tr>
@@ -174,7 +177,7 @@ def render_company_footer_html() -> str:
     first_line = escaped_lines[0]
     rest = "<br>".join(escaped_lines[1:])
     return f"""
-    <p style="margin:0;color:#5B6B76;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.55;">
+    <p style="margin:0;color:#5B6B76;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:12px;line-height:1.55;">
       <strong style="color:#0B1F2A;">{first_line}</strong><br>
       {rest}
     </p>
@@ -189,7 +192,7 @@ def render_unsubscribe_html(language: str, unsubscribe_url: str) -> str:
         text = "If you no longer wish to receive these emails, click:"
         link_label = "Unsubscribe"
     return f"""
-    <p style="margin:14px 0 0 0;color:#5B6B76;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.55;">
+    <p style="margin:14px 0 0 0;color:#5B6B76;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:12px;line-height:1.55;">
       {text} <a href="{escape(unsubscribe_url, quote=True)}" style="color:#0A6B3D;text-decoration:underline;">{link_label}</a>.
     </p>
     """.strip()
@@ -197,7 +200,9 @@ def render_unsubscribe_html(language: str, unsubscribe_url: str) -> str:
 
 def render_footer(language: str, unsubscribe_url: str) -> str:
     return f"""
+    <a href="{COMPANY_URL}"><img src="{EMAIL_LOGO_SRC}" width="120" alt="BHM Chemicals" style="display:block;width:120px;max-width:100%;height:auto;margin:0 0 16px;border:0;"></a>
     {render_company_footer_html()}
+    <p style="font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6"><a href="{COMPANY_URL}" style="color:#11263A">bhm-chemicals.com</a> · <a href="mailto:{CONTACT_EMAIL}" style="color:#11263A">{CONTACT_EMAIL}</a></p>
     {render_unsubscribe_html(language, unsubscribe_url)}
     """.strip()
 
@@ -210,13 +215,17 @@ def render_email_html(
     cta_label: str | None = None,
     cta_url: str | None = None,
     unsubscribe_url: str = UNSUBSCRIBE_PLACEHOLDER,
+    body_html: str | None = None,
+    headline: str | None = None,
+    banner_asset: str | None = None,
 ) -> str:
     language = normalise_language(language)
     products = products or []
-    headline = subject or ("Oferta BHM Chemicals" if language == "pl" else "BHM Chemicals offer")
-    preheader = preheader_from_body(body)
+    headline = headline or subject or ("Oferta BHM Chemicals" if language == "pl" else "BHM Chemicals offer")
+    preheader = preheader_from_body(html_to_text(body_html) if body_html is not None else body)
+    header = (f'<a href="{COMPANY_URL}"><img src="cid:{banner_cid(banner_asset)}" width="600" alt="BHM Chemicals" style="display:block;width:100%;max-width:600px;height:auto;border:0"></a>' if banner_asset else render_brand_header_html())
     return f"""<!doctype html>
-<html>
+<html lang="{language}">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -229,22 +238,23 @@ def render_email_html(
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;background:#F4F7F9;">
       <tr>
         <td align="center" style="padding:28px 12px;">
-          <table role="presentation" width="640" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:640px;border-collapse:collapse;background:#FFFFFF;border:1px solid #D9E1E8;">
+          <!--[if mso]><table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0"><tr><td><![endif]-->
+          <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;border-collapse:collapse;background:#FFFFFF;border:1px solid #D9E1E8;">
             <tr>
               <td style="padding:0;">
-                {render_brand_header_html()}
+                {header}
               </td>
             </tr>
             <tr>
               <td style="padding:34px 34px 12px 34px;">
-                <h1 style="margin:0;color:#0B1F2A;font-family:Arial,Helvetica,sans-serif;font-size:27px;line-height:1.22;font-weight:bold;letter-spacing:0;">
+                <h1 style="margin:0;color:#0B1F2A;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:27px;line-height:1.22;font-weight:bold;letter-spacing:0;">
                   {escape(headline)}
                 </h1>
               </td>
             </tr>
             <tr>
-              <td style="padding:8px 34px 34px 34px;">
-                {render_body_html(body)}
+              <td style="padding:8px 28px 28px;color:#182A33;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:16px;line-height:1.65;">
+                {email_body(body_html) if body_html is not None else render_body_html(body)}
                 {render_products_html(products, language)}
                 {render_cta_html(cta_label, cta_url)}
                 {render_contact_html(language)}
@@ -256,6 +266,7 @@ def render_email_html(
               </td>
             </tr>
           </table>
+          <!--[if mso]></td></tr></table><![endif]-->
         </td>
       </tr>
     </table>
@@ -296,14 +307,17 @@ def render_email_text(
             f"If you no longer wish to receive these emails, click: Unsubscribe. {unsubscribe_url}"
         )
 
-    lines.extend(["", *COMPANY_FOOTER_LINES, "", unsubscribe_line])
+    lines.extend(["", *COMPANY_FOOTER_LINES, COMPANY_URL, "", unsubscribe_line])
     return "\n".join(lines).strip() + "\n"
 
 
-def render_campaign_single(language: str, subject: str | None, body: str | None) -> dict[str, str]:
+def render_campaign_single(language, subject, body, *, body_html=None, headline=None,
+                           cta_label=None, cta_url=None, banner_asset=None):
+    plain = html_to_text(body_html) if body_html is not None else body
     return {
-        "html": render_email_html(language, subject, body),
-        "text": render_email_text(language, subject, body),
+        "html": render_email_html(language, subject, body, cta_label=cta_label, cta_url=cta_url,
+                                  body_html=body_html, headline=headline, banner_asset=banner_asset),
+        "text": render_email_text(language, headline or subject, plain, cta_label=cta_label, cta_url=cta_url),
     }
 
 

@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head"><h1>Historia kontaktu</h1><p>{{ contact.email }} · {{ contact.status }}</p></section>
+<section class="panel"><p>Akceptacja SMTP oznacza przyjęcie wiadomości przez serwer; doręczenie wymaga dowodu Message Trace.</p><div class="table-wrap"><table><thead><tr><th>Kampania</th><th>Próba UTC → Warszawa</th><th>Status</th><th>Akceptacja SMTP</th><th>Trace</th><th>Błąd</th></tr></thead><tbody>
+{% for send in sends %}<tr><td><a href="/history/{{ send.campaign_id }}?send_id={{ send.id }}">{{ send.campaign_name }}</a></td><td>{{ send.started_at|datetime_short }}</td><td>{{ send.status|send_status_label }}{% if send.outcome_uncertain %} · NIERozstrzygnięte{% endif %}</td><td>{{ send.accepted_at|datetime_short }}</td><td>{{ send.trace_status or 'Brak dowodu' }}</td><td>{{ send.last_error|short_text }}</td></tr>{% else %}<tr><td colspan="6">Brak historii.</td></tr>{% endfor %}</tbody></table></div><nav class="pagination">{% if page>1 %}<a href="?page={{ page-1 }}">Poprzednia</a>{% endif %}{% if page*100<total %}<a href="?page={{ page+1 }}">Następna</a>{% endif %}</nav><a href="/contacts/{{ contact.id }}/edit">Wróć do kontaktu</a></section>
+{% endblock %}

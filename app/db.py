@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+from contextlib import contextmanager
 from uuid import uuid4
 
 from .models import VALID_CAMPAIGN_STATUSES, VALID_SEND_STATUSES
@@ -20,12 +21,18 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def get_connection() -> sqlite3.Connection:
+@contextmanager
+def get_connection():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
@@ -130,11 +137,74 @@ def init_db() -> None:
         )
         ensure_v11_schema(conn)
         ensure_v13_schema(conn)
+        ensure_campaign_execution_schema(conn)
         conn.commit()
 
 
 def new_unsubscribe_token() -> str:
     return uuid4().hex + uuid4().hex[:8]
+
+
+def ensure_campaign_execution_schema(conn):
+    for name in ('body_html', 'headline', 'cta_label', 'cta_url', 'banner_asset'):
+        ensure_column(conn, 'campaigns', name, 'TEXT NULL')
+    ensure_column(conn, 'email_sends', 'banner_asset', 'TEXT NULL')
+    ensure_column(conn, 'email_sends', 'outcome_uncertain', 'INTEGER NOT NULL DEFAULT 0')
+    ensure_column(conn, 'unsubscribe_events', 'notification_status', "TEXT NOT NULL DEFAULT 'pending'")
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS campaign_selection (
+            campaign_id INTEGER NOT NULL REFERENCES campaigns(id),
+            contact_id INTEGER NOT NULL REFERENCES contacts(id),
+            PRIMARY KEY(campaign_id, contact_id)
+        );
+        CREATE TABLE IF NOT EXISTS campaign_execution (
+            campaign_id INTEGER PRIMARY KEY REFERENCES campaigns(id),
+            state TEXT NOT NULL DEFAULT 'ready',
+            mode TEXT NOT NULL CHECK(mode IN ('dry_run', 'smtp')),
+            manual_pause INTEGER NOT NULL DEFAULT 0,
+            started REAL NOT NULL, updated REAL NOT NULL,
+            active_seconds REAL NOT NULL DEFAULT 0,
+            cycle_seconds REAL NOT NULL DEFAULT 0,
+            cooldown_until REAL NOT NULL DEFAULT 0,
+            next_attempt REAL NOT NULL DEFAULT 0,
+            smtp_seconds REAL NOT NULL DEFAULT 0,
+            smtp_attempts INTEGER NOT NULL DEFAULT 0,
+            problem TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS smtp_control (
+            id INTEGER PRIMARY KEY CHECK(id=1),
+            campaign_id INTEGER NULL REFERENCES campaigns(id),
+            next_attempt REAL NOT NULL DEFAULT 0,
+            blocked_until REAL NOT NULL DEFAULT 0
+        );
+        INSERT OR IGNORE INTO smtp_control(id) VALUES(1);
+        CREATE TABLE IF NOT EXISTS smtp_attempts (
+            id INTEGER PRIMARY KEY, send_id INTEGER NOT NULL REFERENCES email_sends(id),
+            started REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_smtp_attempts_time ON smtp_attempts(started);
+        CREATE TABLE IF NOT EXISTS notification_attempts (
+            id INTEGER PRIMARY KEY, event_id INTEGER NOT NULL REFERENCES unsubscribe_events(id),
+            started REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sends_queue ON email_sends(campaign_id,status,id);
+        CREATE TABLE IF NOT EXISTS execution_events (
+            id INTEGER PRIMARY KEY, campaign_id INTEGER NOT NULL REFERENCES campaigns(id),
+            created REAL NOT NULL, message TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS recovery_decisions (
+            id INTEGER PRIMARY KEY, send_id INTEGER NOT NULL REFERENCES email_sends(id),
+            created REAL NOT NULL, decision TEXT NOT NULL, note TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS send_attempt_history (
+            id INTEGER PRIMARY KEY, send_id INTEGER NOT NULL REFERENCES email_sends(id),
+            attempt_number INTEGER NOT NULL, mode TEXT NOT NULL, started REAL NOT NULL,
+            finished REAL NULL, recovered_at REAL NULL, status TEXT NOT NULL,
+            message_id TEXT NOT NULL, smtp_code TEXT NULL, detail TEXT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_attempt_history_send ON send_attempt_history(send_id,id);
+    ''')
+    ensure_column(conn,'campaign_execution','identity_fingerprint','TEXT NULL')
 
 
 def ensure_unique_token(conn: sqlite3.Connection) -> str:

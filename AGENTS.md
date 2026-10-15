@@ -40,7 +40,13 @@ Choose the smallest useful validation for the change:
 - Docs-only: confirm files exist, content is accurate, and no secrets or invented claims were added.
 - Python/source changes: run `python -m compileall app` at minimum.
 - UI/template/static changes: run locally and check desktop/mobile basics when relevant.
-- Mailing/database changes: test dry-run path and one edge case; avoid real SMTP sends unless explicitly approved.
+- Mailing/database changes: run `.venv/Scripts/python -m unittest discover -s tests -v` on its isolated fixtures; avoid real SMTP unless explicitly approved.
+- `tools/qa_server.py` is the synthetic visual-QA launcher (port 8017, SMTP forced off); it never targets operational SQLite.
+- Recipient regression QA uses `tools/recipient_qa_server.py` (8018, separate synthetic SQLite, SMTP OFF) and `tools/recipient_browser_qa.cjs`. Checkbox changes are temporary; only explicit Add persists. Add is cumulative; Remove and confirmed Clear are the only deletion paths. Keep the frontend/backend workflow compatibility gate.
+- Preserve immutable campaign assets together with database backups. Do not delete assets referenced by drafts or historical snapshots.
+- Keep the 20-second worker interval, 3600 active / 300 break contract, explicit restart recovery and uncertainty gate. Do not restore direct SMTP calls outside the singleton worker.
+- Operational migration/activation requires a separately authorized backup and copied-database preflight. A running older process is not proof of the new source behavior.
+- Material tasks maintain one `Requirements & Acceptance` register and exactly one dated task entry in `PROJECT_BRIEF.md → Change Log`.
 
 ## Project Brief Update Rule
 

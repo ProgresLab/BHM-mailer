@@ -7,11 +7,17 @@ import io
 import os
 from pathlib import Path
 import re
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse, FileResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from . import worker
+from .assets import MAX_UPLOAD, store_banner, asset_path, banner_cid
+from .rich_text import sanitize_html, html_to_text, legacy_to_html, safe_url
+from .selection import PAGE_SIZE, selected_ids, selection_fingerprint, update_selection
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -44,6 +50,7 @@ from .models import VALID_CONTACT_STATUSES, VALID_COUNTRY_GROUPS, VALID_LANGUAGE
 
 
 app = FastAPI(title="BHM Chemicals Mailing Tool")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1','localhost','[::1]','testserver'])
 app.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
 
@@ -119,6 +126,7 @@ def truncate_text(value: object, limit: int = 140) -> str:
 
 
 def unsubscribe_preview(value: object) -> str:
+    value = re.sub(r"cid:bhm-banner-([a-f0-9]{64}\.(?:jpg|png))", r"/campaign-assets/\1", str(value or ""))
     return (
         str(value or "")
         .replace(LEGACY_UNSUBSCRIBE_PLACEHOLDER, UNSUBSCRIBE_PLACEHOLDER)
@@ -178,11 +186,27 @@ templates.env.filters["datetime_short"] = format_datetime_short
 templates.env.filters["unsubscribe_preview"] = unsubscribe_preview
 templates.env.filters["send_status_label"] = display_send_status
 templates.env.filters["short_text"] = truncate_text
+templates.env.filters['epoch_utc'] = lambda value: datetime.fromtimestamp(float(value),timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if value else '—'
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    worker.manager.start()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    worker.manager.shutdown()
+
+
+@app.middleware("http")
+async def local_state_guard(request, call_next):
+    if request.method == 'POST':
+        origin = request.headers.get('origin')
+        if request.headers.get('sec-fetch-site') == 'cross-site' or (origin and urlsplit(origin).netloc != request.headers.get('host')):
+            return JSONResponse({'error': 'Odrzucono żądanie z innej witryny.'}, status_code=403)
+    return await call_next(request)
 
 
 def render_template(
@@ -352,7 +376,7 @@ def campaign_status_payload(campaign_id: int) -> dict | None:
             FROM email_sends
             WHERE campaign_id = ?
             ORDER BY id DESC
-            LIMIT 20
+            LIMIT 8
             """,
             (campaign_id,),
         ).fetchall()
@@ -431,6 +455,8 @@ def trace_status_to_send_status(raw_status: str, current_status: str) -> tuple[s
         "skipped_duplicate",
         "cancelled",
         "dry_run",
+        "pending",
+        "sending",
     }
     if protected:
         return current_status, lowered in {"delivered", "failed", "quarantined"}, status
@@ -459,6 +485,8 @@ def best_trace_match(
     best_send = None
     best_score = float("inf")
     for send in candidates:
+        if send['status'] in {'pending','sending','dry_run','cancelled'}:
+            continue
         if subject and normalized_subject(send["subject"]) != subject:
             continue
         if sender and sender not in trace_sender_candidates(send, settings):
@@ -595,6 +623,8 @@ def import_message_trace_csv(campaign_id: int, csv_text: str) -> dict[str, int]:
                     match["id"],
                 ),
             )
+            if is_final and match['status'] not in {'pending','sending','dry_run'}:
+                conn.execute('UPDATE email_sends SET outcome_uncertain=0 WHERE id=?', (match['id'],))
             report["updated"] += 1
 
         finalize_campaign_status(conn, campaign_id)
@@ -747,6 +777,19 @@ def contact_edit_form(request: Request, contact_id: int):
     return render_template(request, "contact_edit.html", {"contact": contact, "form": dict(contact)})
 
 
+@app.get('/contacts/{contact_id}/history')
+def contact_history(request: Request,contact_id: int,page: int=1):
+    page=max(1,page)
+    with get_connection() as conn:
+        contact=conn.execute('SELECT * FROM contacts WHERE id=?',(contact_id,)).fetchone()
+        if not contact:
+            return redirect_to('/contacts',message='Nie znaleziono kontaktu.')
+        total=conn.execute('SELECT COUNT(*) FROM email_sends WHERE contact_id=?',(contact_id,)).fetchone()[0]
+        sends=conn.execute("""SELECT s.*,c.name AS campaign_name FROM email_sends s JOIN campaigns c ON c.id=s.campaign_id
+            WHERE s.contact_id=? ORDER BY s.id DESC LIMIT 100 OFFSET ?""",(contact_id,(page-1)*100)).fetchall()
+    return render_template(request,'contact_history.html',dict(contact=contact,sends=sends,page=page,total=total))
+
+
 @app.post("/contacts/{contact_id}/edit")
 async def contact_edit(request: Request, contact_id: int):
     form = await request.form()
@@ -852,230 +895,295 @@ async def contacts_bulk_update(request: Request):
 
 @app.get("/campaigns/new")
 def campaign_new_form(request: Request):
-    return render_template(request, "campaign_new.html")
+    return render_template(request, "campaign_new.html", {"form": {}})
+
+
+@app.get("/campaigns/{campaign_id}/edit")
+def campaign_edit_form(request: Request, campaign_id: int):
+    campaign = fetch_one_dict('SELECT * FROM campaigns WHERE id=?', (campaign_id,))
+    if not campaign or campaign['status'] != 'draft':
+        return redirect_to(f'/campaigns/{campaign_id}/preview', message='Edycja jest dostępna tylko dla draftu.')
+    campaign['body_html'] = sanitize_html(campaign.get('body_html') or legacy_to_html(campaign.get('body')))
+    return render_template(request, 'campaign_new.html', {'form': campaign})
 
 
 @app.post("/campaigns/new")
 async def campaign_create(request: Request):
-    form = await request.form()
-    name = str(form.get("name") or "").strip()
-    language = str(form.get("language") or "").strip().lower()
-    body = str(form.get("body") or "").strip()
-    if not name:
-        return render_template(
-            request,
-            "campaign_new.html",
-            {"error": "Nazwa kampanii jest wymagana.", "form": form},
-            status_code=400,
-        )
-    if language not in VALID_LANGUAGES:
-        return render_template(
-            request,
-            "campaign_new.html",
-            {"error": "Wybierz język kampanii.", "form": form},
-            status_code=400,
-        )
-    if not body:
-        return render_template(
-            request,
-            "campaign_new.html",
-            {"error": "Treść wiadomości jest wymagana.", "form": form},
-            status_code=400,
-        )
+    return await save_draft(request)
 
-    subject = name
-    rendered = render_campaign_single(language, subject, body)
-    now = utc_now()
+
+@app.post("/campaigns/{campaign_id}/edit")
+async def campaign_update(request: Request, campaign_id: int):
+    return await save_draft(request, campaign_id)
+
+
+async def save_draft(request, campaign_id=None):
+    data = await request.form()
+    fields = {k: str(data.get(k) or '').strip() for k in ('name','subject','language','headline','cta_label','cta_url')}
+    fields['body_html'] = sanitize_html(str(data.get('body_html') or legacy_to_html(str(data.get('body') or ''))))
+    try:
+        if not fields['name'] or not fields['subject'] or not fields['headline'] or not html_to_text(fields['body_html']):
+            raise ValueError('Wypełnij nazwę wewnętrzną, Subject, nagłówek oraz treść.')
+        if fields['language'] not in VALID_LANGUAGES:
+            raise ValueError('Wybierz jeden język: polski lub angielski.')
+        if any(len(fields[k]) > 250 or '\r' in fields[k] or '\n' in fields[k] for k in ('name','subject','headline','cta_label')):
+            raise ValueError('Nagłówki: maksymalnie 250 znaków, bez podziałów linii.')
+        if len(fields['body_html']) > 100000:
+            raise ValueError('Treść jest zbyt długa (maksymalnie 100 000 znaków).')
+        if bool(fields['cta_label']) != bool(fields['cta_url']) or (fields['cta_url'] and not safe_url(fields['cta_url'])):
+            raise ValueError('CTA wymaga etykiety i poprawnego URL http/https lub obu pustych pól.')
+        old = fetch_one_dict('SELECT * FROM campaigns WHERE id=?', (campaign_id,)) if campaign_id else {}
+        if campaign_id and (not old or old['status'] != 'draft'):
+            raise ValueError('Kampania została zatwierdzona. Treści nie można zmienić.')
+        banner = old.get('banner_asset')
+        if data.get('remove_banner') == '1':
+            banner = None
+        upload = data.get('banner')
+        if upload and getattr(upload, 'filename', ''):
+            try:
+                banner = await run_in_threadpool(store_banner, await upload.read(MAX_UPLOAD + 1))
+            finally:
+                await upload.close()
+        fields['banner_asset'] = banner
+        def persist():
+            rendered = render_campaign_single(fields['language'], fields['subject'], None,
+                body_html=fields['body_html'], headline=fields['headline'], cta_label=fields['cta_label'],
+                cta_url=fields['cta_url'], banner_asset=banner)
+            values = (fields['name'], fields['language'], fields['subject'], html_to_text(fields['body_html']),
+                      rendered['html'], rendered['text'], fields['body_html'], fields['headline'],
+                      fields['cta_label'], fields['cta_url'], banner)
+            with get_connection() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                if campaign_id:
+                    changed = conn.execute("""UPDATE campaigns SET name=?,language=?,subject=?,body=?,html=?,text=?,
+                        body_html=?,headline=?,cta_label=?,cta_url=?,banner_asset=? WHERE id=? AND status='draft'""", (*values,campaign_id))
+                    if changed.rowcount != 1:
+                        raise ValueError('Status kampanii zmienił się. Zapis zablokowany.')
+                    return campaign_id
+                cursor = conn.execute("""INSERT INTO campaigns(name,language,subject,body,html,text,body_html,headline,
+                    cta_label,cta_url,banner_asset,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'draft',?)""", (*values,utc_now()))
+                return cursor.lastrowid
+        saved = await run_in_threadpool(persist)
+    except ValueError as exc:
+        fields['id'] = campaign_id
+        return render_template(request, 'campaign_new.html', {'form': fields, 'error': str(exc)}, status_code=400)
+    return redirect_to(f'/campaigns/{saved}/preview', message='Draft zapisany.')
+
+
+@app.get('/campaign-assets/{asset_id}')
+def private_campaign_asset(asset_id: str):
+    try:
+        path = asset_path(asset_id)
+    except ValueError:
+        return JSONResponse({'error':'Nie znaleziono grafiki.'}, status_code=404)
     with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO campaigns (
-                name, language, subject, body, html, text, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)
-            """,
-            (
-                name,
-                language,
-                subject,
-                body,
-                rendered["html"],
-                rendered["text"],
-                now,
-            ),
-        )
-        campaign_id = cursor.lastrowid
-        conn.commit()
-    return redirect_to(f"/campaigns/{campaign_id}/preview", message="Draft kampanii zapisany.")
+        bound = conn.execute('SELECT 1 FROM campaigns WHERE banner_asset=? UNION SELECT 1 FROM email_sends WHERE banner_asset=? LIMIT 1', (asset_id,asset_id)).fetchone()
+    if not bound or not path.is_file():
+        return JSONResponse({'error':'Nie znaleziono grafiki.'}, status_code=404)
+    return FileResponse(path, headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
 
 
-@app.get("/campaigns/{campaign_id}/preview")
+@app.get('/campaigns/{campaign_id}/preview')
 def campaign_preview(request: Request, campaign_id: int):
-    with get_connection() as conn:
-        campaign = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+    campaign = fetch_one_dict('SELECT * FROM campaigns WHERE id=?', (campaign_id,))
     if not campaign:
-        return redirect_to("/history", message="Nie znaleziono kampanii.")
-    return render_template(request, "campaign_preview.html", {"campaign": campaign})
+        return redirect_to('/history', message='Nie znaleziono kampanii.')
+    return render_template(request, 'campaign_preview.html', {'campaign':campaign})
 
 
-@app.post("/campaigns/{campaign_id}/approve")
+@app.post('/campaigns/{campaign_id}/approve')
 def campaign_approve(campaign_id: int):
     with get_connection() as conn:
-        conn.execute(
-            "UPDATE campaigns SET status = 'approved', approved_at = ? WHERE id = ? AND status = 'draft'",
-            (utc_now(), campaign_id),
-        )
-        conn.commit()
-    return redirect_to(f"/campaigns/{campaign_id}/recipients", message="Kampania zatwierdzona.")
+        conn.execute("UPDATE campaigns SET status='approved',approved_at=? WHERE id=? AND status='draft'", (utc_now(),campaign_id))
+    return redirect_to(f'/campaigns/{campaign_id}/recipients', message='Kampania zatwierdzona. Treść została zablokowana.')
 
 
-@app.get("/campaigns/{campaign_id}/recipients")
-def campaign_recipients(
-    request: Request,
-    campaign_id: int,
-    country_group: str = "",
-    language: str = "",
-    active_only: str = "1",
-    search: str = "",
-):
+@app.post('/campaigns/{campaign_id}/reopen')
+def campaign_reopen(campaign_id: int):
     with get_connection() as conn:
-        campaign = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
-    if not campaign:
-        return redirect_to("/history", message="Nie znaleziono kampanii.")
+        conn.execute("""UPDATE campaigns SET status='draft',approved_at=NULL WHERE id=? AND status='approved'
+                        AND NOT EXISTS(SELECT 1 FROM email_sends WHERE campaign_id=?)""", (campaign_id,campaign_id))
+    return redirect_to(f'/campaigns/{campaign_id}/edit')
 
-    if "language" not in request.query_params:
-        language = campaign["language"] or ""
 
-    where: list[str] = []
-    params: list[str] = []
-    if country_group:
-        where.append("country_group = ?")
-        params.append(country_group)
-    if language:
-        where.append("language = ?")
-        params.append(language)
-    if active_only == "1":
-        where.append("status = 'active'")
-    if search:
-        where.append("(email LIKE ? OR company_name LIKE ? OR notes LIKE ?)")
-        like = f"%{search}%"
-        params.extend([like, like, like])
-    where_sql = "WHERE " + " AND ".join(where) if where else ""
+@app.get('/campaigns/{campaign_id}/recipients')
+def campaign_recipients(request: Request, campaign_id: int, country_group: str='', language: str='',
+                        active_only: str='1', search: str='', page: int=1, selected_only: str='0'):
     with get_connection() as conn:
-        contacts = conn.execute(
-            f"SELECT * FROM contacts {where_sql} ORDER BY language, country_group, email",
-            tuple(params),
-        ).fetchall()
-    return render_template(
-        request,
-        "campaign_recipients.html",
-        {
-            "campaign": campaign,
-            "contacts": contacts,
-            "filters": {
-                "country_group": country_group,
-                "language": language,
-                "active_only": active_only,
-                "search": search,
-            },
-        },
-    )
+        campaign = conn.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
+        if not campaign:
+            return redirect_to('/history', message='Nie znaleziono kampanii.')
+        if 'language' not in request.query_params:
+            language = campaign['language'] or ''
+        where, params = [], []
+        for key,value in (('country_group',country_group),('language',language)):
+            if value:
+                where.append(f'c.{key}=?')
+                params.append(value)
+        if active_only == '1':
+            where.append("c.status='active'")
+        if search:
+            where.append('(c.email LIKE ? OR c.company_name LIKE ? OR c.notes LIKE ?)')
+            params.extend([f'%{search}%']*3)
+        if selected_only == '1':
+            where.append('EXISTS(SELECT 1 FROM campaign_selection s WHERE s.contact_id=c.id AND s.campaign_id=?)')
+            params.append(campaign_id)
+        sql = ' WHERE ' + ' AND '.join(where) if where else ''
+        total = conn.execute('SELECT COUNT(*) FROM contacts c'+sql,tuple(params)).fetchone()[0]
+        pages = max(1,(total+PAGE_SIZE-1)//PAGE_SIZE)
+        page = min(max(1,page),pages)
+        contacts = conn.execute('SELECT c.* FROM contacts c'+sql+' ORDER BY c.email,c.id LIMIT ? OFFSET ?',(*params,PAGE_SIZE,(page-1)*PAGE_SIZE)).fetchall()
+        selected = selected_ids(conn,campaign_id)
+        eligible_count = len(selected_ids(conn,campaign_id,eligible=True))
+    filters = dict(country_group=country_group,language=language,active_only=active_only,search=search,selected_only=selected_only)
+    links = [(p,'?'+urlencode(dict(filters,page=p))) for p in range(1,pages+1)]
+    return render_template(request,'campaign_recipients.html',dict(campaign=campaign,contacts=contacts,filters=filters,
+        selected=selected,selected_count=len(selected),eligible_count=eligible_count,page=page,pages=pages,page_links=links,total=total))
 
 
-@app.post("/campaigns/{campaign_id}/recipients")
-async def campaign_send(request: Request, campaign_id: int, background_tasks: BackgroundTasks):
+def parse_ids(value):
+    values = str(value or '').split(',')
+    if len(values)>500 or any(v and not v.isdigit() for v in values):
+        raise ValueError('Nieprawidłowa selekcja.')
+    return [int(v) for v in values if v]
+
+
+def selection_state(campaign_id):
+    with get_connection() as conn:
+        campaign = conn.execute('SELECT status FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
+        if not campaign:
+            return JSONResponse({'error':'Nie znaleziono kampanii.'}, status_code=404)
+        ids = selected_ids(conn, campaign_id)
+        return {'selected_count':len(ids), 'selected_ids':ids,
+                'eligible_count':len(selected_ids(conn, campaign_id, eligible=True)),
+                'editable':campaign['status'] == 'approved', 'workflow':'explicit_add_v1'}
+
+
+@app.get('/campaigns/{campaign_id}/selection')
+def campaign_selection_state(campaign_id: int):
+    result = selection_state(campaign_id)
+    return JSONResponse(result, headers={'Cache-Control':'no-store'}) if isinstance(result, dict) else result
+
+
+@app.post('/campaigns/{campaign_id}/selection')
+async def campaign_selection_save(request: Request,campaign_id: int):
     form = await request.form()
-    ids = [int(value) for value in form.getlist("contact_ids") if str(value).isdigit()]
-    if not ids:
-        return redirect_to(f"/campaigns/{campaign_id}/recipients", message="Nie zaznaczono odbiorców.")
+    try:
+        action = str(form.get('action') or 'add')
+        clear = form.get('clear') == '1' or action == 'clear'
+        if action not in ('add','clear') or (clear and form.get('confirm_clear') != '1'):
+            raise ValueError('Wyczyszczenie listy wymaga jawnego potwierdzenia.')
+        await run_in_threadpool(update_selection,campaign_id,parse_ids(form.get('visible')),parse_ids(form.get('checked')),clear)
+        return selection_state(campaign_id)
+    except ValueError as exc:
+        return JSONResponse({'error':str(exc)},status_code=400)
 
+
+@app.post('/campaigns/{campaign_id}/selection/remove')
+async def campaign_selection_remove(request: Request, campaign_id: int):
+    form = await request.form()
+    try:
+        ids = parse_ids(form.get('contact_id'))
+        if len(ids) != 1:
+            raise ValueError('Wskaż jednego odbiorcę do usunięcia z kampanii.')
+        await run_in_threadpool(update_selection, campaign_id, ids, [], remove=True)
+    except ValueError as exc:
+        return redirect_to(f'/campaigns/{campaign_id}/summary', message=str(exc))
+    return redirect_to(f'/campaigns/{campaign_id}/summary', message='Usunięto odbiorcę z kampanii.')
+
+
+@app.get('/campaigns/{campaign_id}/summary')
+def campaign_summary(request: Request, campaign_id: int):
     with get_connection() as conn:
-        campaign = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+        campaign = conn.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
+        recipients = conn.execute('''SELECT c.* FROM contacts c JOIN campaign_selection s ON s.contact_id=c.id
+            WHERE s.campaign_id=? ORDER BY c.id''', (campaign_id,)).fetchall()
+    if not campaign or campaign['status'] != 'approved':
+        return redirect_to(f'/campaigns/{campaign_id}/recipients', message='Selekcja wymaga zatwierdzonej kampanii.')
+    ids = [r['id'] for r in recipients if r['status'] == 'active']
+    seconds = max(0,len(ids)-1)*20
+    seconds += (seconds//3600)*300
+    return render_template(request,'campaign_confirm.html',dict(campaign=campaign,count=len(ids),
+        selected_count=len(recipients),recipients=recipients,excluded=len(recipients)-len(ids),
+        fingerprint=selection_fingerprint(ids),estimate_minutes=round(seconds/60),settings=get_mail_settings()))
+
+
+@app.post('/editor/sanitize')
+async def editor_sanitize(request: Request):
+    form = await request.form()
+    value = str(form.get('html') or '')
+    if len(value) > 200000:
+        return JSONResponse({'error':'Wklejana treść jest zbyt długa.'}, status_code=400)
+    return {'html':sanitize_html(value)}
+
+
+@app.post('/campaigns/{campaign_id}/recipients')
+async def campaign_send(request: Request,campaign_id: int):
+    form = await request.form()
+    with get_connection() as conn:
+        campaign = conn.execute('SELECT * FROM campaigns WHERE id=?',(campaign_id,)).fetchone()
+        ids = selected_ids(conn,campaign_id,eligible=True)
+        selected_count = len(selected_ids(conn,campaign_id))
+    if not campaign or campaign['status'] != 'approved' or not ids or len(ids)>1000:
+        return redirect_to(f'/campaigns/{campaign_id}/recipients',message='Wybierz 1–1000 aktywnych odbiorców zatwierdzonej kampanii.')
+    fingerprint = selection_fingerprint(ids)
+    if form.get('confirmed') != '1':
+        return campaign_summary(request, campaign_id)
+    if form.get('fingerprint') != fingerprint:
+        return redirect_to(f'/campaigns/{campaign_id}/recipients',message='Selekcja lub kwalifikowalność zmieniła się. Potwierdź ponownie.')
+    if not worker.manager.available:
+        return redirect_to(f'/campaigns/{campaign_id}/recipients',message='Worker niedostępny w tym procesie. Użyj jednej instancji aplikacji.')
+    mode = str(form.get('mode') or '')
+    if mode == 'smtp' and form.get('smtp_ack') != '1':
+        return redirect_to(f'/campaigns/{campaign_id}/recipients',message='Realny SMTP wymaga osobnego jawnego potwierdzenia operatora.')
+    try:
+        result = await run_in_threadpool(prepare_campaign_send,campaign_id,ids,mode)
+        if not result['started']:
+            raise ValueError(result['message'])
+    except ValueError as exc:
+        return redirect_to(f'/campaigns/{campaign_id}/recipients',message=str(exc))
+    worker.manager.wake.set()
+    return redirect_to(f'/campaigns/{campaign_id}/monitor')
+
+
+@app.get('/campaigns/{campaign_id}/monitor')
+def campaign_monitor(request: Request,campaign_id: int):
+    campaign = fetch_one_dict('SELECT * FROM campaigns WHERE id=?',(campaign_id,))
     if not campaign:
-        return redirect_to("/history", message="Nie znaleziono kampanii.")
-    if campaign["status"] == "sending":
-        return redirect_to(f"/history/{campaign_id}", message="Kampania jest już w trakcie wysyłki.")
-    if campaign["status"] != "approved":
-        return redirect_to(
-            f"/campaigns/{campaign_id}/recipients",
-            message="Kampania musi mieć status approved przed wysyłką.",
-        )
+        return redirect_to('/history')
+    return render_template(request,'campaign_monitor.html',dict(campaign=campaign,status_data=worker.execution_payload(campaign_id)))
 
-    active_ids = fetch_active_contact_ids(ids)
-    if not active_ids:
-        return redirect_to(
-            f"/campaigns/{campaign_id}/recipients",
-            message="Nie wybrano aktywnych odbiorców.",
-        )
 
-    settings = get_mail_settings()
-    configuration_error = smtp_send_configuration_error(settings)
-    if configuration_error:
-        return redirect_to(f"/campaigns/{campaign_id}/recipients", message=configuration_error)
+@app.post('/campaigns/{campaign_id}/pause')
+def campaign_pause(campaign_id: int):
+    try:
+        worker.pause(campaign_id)
+        return {'ok':True}
+    except ValueError as exc:
+        return JSONResponse({'error':str(exc)},status_code=400)
 
-    warning = public_unsubscribe_url_warning(settings)
-    if warning and len(active_ids) > 1:
-        return redirect_to(f"/campaigns/{campaign_id}/recipients", message=warning)
-    if warning and request.query_params.get("local_unsubscribe_warning_ack") != "1":
-        return redirect_to(
-            f"/campaigns/{campaign_id}/recipients",
-            message=warning,
-            local_unsubscribe_warning_ack="1",
-        )
 
-    large_campaign_warning = len(active_ids) > 100
-    large_campaign_ack_required = len(active_ids) > 500
-    missing_large_ack = (
-        str(form.get("confirmed") or "") == "1"
-        and large_campaign_ack_required
-        and str(form.get("large_delivery_ack") or "") != "1"
-    )
+@app.post('/campaigns/{campaign_id}/resume')
+def campaign_resume(campaign_id: int):
+    if not worker.manager.available:
+        return JSONResponse({'error':'Worker niedostępny w tym procesie.'},status_code=409)
+    try:
+        worker.resume(campaign_id)
+        return {'ok':True}
+    except ValueError as exc:
+        return JSONResponse({'error':str(exc)},status_code=400)
 
-    if str(form.get("confirmed") or "") != "1" or missing_large_ack:
-        language = campaign["language"] or ""
-        with get_connection() as conn:
-            contacts = conn.execute(
-                """
-                SELECT * FROM contacts
-                WHERE status = 'active' AND (? = '' OR language = ?)
-                ORDER BY language, country_group, email
-                """,
-                (language, language),
-            ).fetchall()
-        return render_template(
-            request,
-            "campaign_recipients.html",
-            {
-                "campaign": campaign,
-                "contacts": contacts,
-                "filters": {
-                    "country_group": "",
-                    "language": language,
-                    "active_only": "1",
-                    "search": "",
-                },
-                "confirm_count": len(active_ids),
-                "confirm_contact_ids": active_ids,
-                "large_campaign_warning": large_campaign_warning,
-                "large_campaign_ack_required": large_campaign_ack_required,
-                "confirm_error": (
-                    "Confirm that accepted_by_smtp is not final delivery before sending this large campaign."
-                    if missing_large_ack
-                    else None
-                ),
-            },
-        )
 
-    with get_connection() as conn:
-        current = conn.execute("SELECT status FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
-    if current and current["status"] == "sending":
-        return redirect_to(f"/history/{campaign_id}", message="Kampania jest już w trakcie wysyłki.")
-
-    result = prepare_campaign_send(campaign_id, active_ids)
-    if not result["started"]:
-        return redirect_to(f"/history/{campaign_id}", message=result["message"])
-    background_tasks.add_task(send_pending_campaign, campaign_id, result["send_ids"])
-    message = f"Wysyłka rozpoczęta w tle. Odbiorcy: {result['recipient_count']}."
-    return redirect_to(f"/history/{campaign_id}", message=message)
+@app.post('/sends/{send_id}/resolve')
+async def campaign_resolve(request: Request,send_id: int):
+    form = await request.form()
+    send = fetch_one_dict('SELECT campaign_id FROM email_sends WHERE id=?',(send_id,))
+    try:
+        await run_in_threadpool(worker.resolve_uncertain,send_id,str(form.get('decision') or ''),str(form.get('note') or ''),form.get('confirmed')=='1')
+        message='Decyzja zapisana. Wznowienie pozostaje ręczne.'
+    except ValueError as exc:
+        message=str(exc)
+    return redirect_to('/history/'+str(send.get('campaign_id','')),message=message)
 
 
 @app.get("/campaigns/{campaign_id}/status.json")
@@ -1083,6 +1191,7 @@ def campaign_status_json(campaign_id: int):
     payload = campaign_status_payload(campaign_id)
     if payload is None:
         return JSONResponse({"error": "Campaign not found."}, status_code=404)
+    payload.update(worker.execution_payload(campaign_id))
     return payload
 
 
@@ -1224,7 +1333,7 @@ def history(request: Request):
 
 
 @app.get("/history/{campaign_id}")
-def history_detail(request: Request, campaign_id: int, send_id: int | None = None):
+def history_detail(request: Request, campaign_id: int, send_id: int | None = None, attempt_page: int = 1):
     with get_connection() as conn:
         campaign = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
         sends = conn.execute(
@@ -1273,6 +1382,11 @@ def history_detail(request: Request, campaign_id: int, send_id: int | None = Non
                 if int(send["id"]) == send_id:
                     selected_send = send
                     break
+    with get_connection() as conn:
+        attempts=conn.execute("""SELECT a.*,s.email FROM send_attempt_history a JOIN email_sends s ON s.id=a.send_id
+            WHERE s.campaign_id=? ORDER BY a.id DESC LIMIT 100 OFFSET ?""",(campaign_id,(max(1,attempt_page)-1)*100)).fetchall()
+        decisions=conn.execute("""SELECT d.*,s.email FROM recovery_decisions d JOIN email_sends s ON s.id=d.send_id
+            WHERE s.campaign_id=? ORDER BY d.id DESC""",(campaign_id,)).fetchall()
     status_data = campaign_status_payload(campaign_id)
     diagnostic_recipient = selected_send["email"] if selected_send else "test@example.com"
     return render_template(
@@ -1283,6 +1397,7 @@ def history_detail(request: Request, campaign_id: int, send_id: int | None = Non
             "campaign": campaign,
             "sends": sends,
             "selected_send": selected_send,
+            "attempts": attempts, "attempt_page": max(1,attempt_page), "decisions": decisions,
             "status_data": status_data,
             "current_smtp_config": current_smtp_diagnostics(diagnostic_recipient),
             "actual_smtp_identity": actual_send_smtp_identity(selected_send),

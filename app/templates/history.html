@@ -65,10 +65,18 @@
 
 {% if campaign %}
 <section class="page-head detail-head">
-  <h1>{{ campaign.name }}</h1>
+  <h1>{{ campaign.name }}</h1><div class="actions"><a class="button" href="/campaigns/{{ campaign.id }}/monitor">Monitor kampanii</a><a class="button button-secondary" href="/campaigns/{{ campaign.id }}/preview">Podgląd / edycja draftu</a></div>
   <p>Subject: {{ campaign.subject or campaign.subject_pl or campaign.subject_en or campaign.name }} · Language: {{ campaign.language or '' }}</p>
 </section>
 
+<section class="panel"><h2>Dziennik prób</h2><p class="muted">Nowe próby są zapisywane osobno. Wcześniejsze kampanie zachowują dotychczasową historię; nie dopisujemy wstecz zdarzeń.</p>
+<div class="table-wrap"><table><thead><tr><th>Adres</th><th>Próba</th><th>Tryb</th><th>Początek</th><th>Status</th><th>Kod</th><th>Szczegóły</th></tr></thead><tbody>{% for a in attempts %}<tr><td>{{ a.email }}</td><td>{{ a.attempt_number }}</td><td>{{ a.mode }}</td><td>{{ a.started|epoch_utc }}</td><td>{{ a.status|send_status_label }}</td><td>{{ a.smtp_code or '—' }}</td><td>{{ a.detail|short_text }}</td></tr>{% else %}<tr><td colspan="7">Brak nowych prób.</td></tr>{% endfor %}</tbody></table></div>
+<nav class="pagination">{% if attempt_page>1 %}<a href="?attempt_page={{ attempt_page-1 }}">Poprzednie próby</a>{% endif %}{% if attempts|length==100 %}<a href="?attempt_page={{ attempt_page+1 }}">Starsze próby</a>{% endif %}</nav>
+{% for d in decisions %}<p>Decyzja operatora · {{ d.email }} · {{ d.decision }} · {{ d.note|short_text(500) }}</p>{% endfor %}</section>
+{% for send in sends if send.outcome_uncertain %}
+<section class="panel"><h2>Nierozstrzygnięta próba: {{ send.email }}</h2><p>Message-ID: {{ send.message_id or '—' }}. Nie ponawiamy automatycznie.</p>
+<form method="post" action="/sends/{{ send.id }}/resolve" class="form-grid"><label>Decyzja<select name="decision"><option value="cancel">Pomiń bez ponowienia</option><option value="retry_not_accepted">Ponów — mam dowód braku akceptacji SMTP</option></select></label><label>Dowód / uzasadnienie<input name="note" minlength="12" required></label><label class="checkline span-2"><input type="checkbox" name="confirmed" value="1">Potwierdzam udokumentowany brak akceptacji (wymagane dla ponowienia).</label><button class="button" type="submit">Zapisz decyzję</button></form></section>
+{% endfor %}
 {% if current_smtp_config %}
 <section class="panel">
   <div class="panel-head">

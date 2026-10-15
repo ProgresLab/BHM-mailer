@@ -18,6 +18,8 @@ uploads/**
 !data/.gitkeep
 backups/
 logs/
+output/
+*.worker.lock
 *.log
 *.pem
 *.key

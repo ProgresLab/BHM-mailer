@@ -1,36 +1,28 @@
 {% extends "base.html" %}
-{% block title %}Nowa kampania - BHM Chemicals Mailing Tool{% endblock %}
+{% block title %}Edytor kampanii · BHM Chemicals{% endblock %}
 {% block content %}
-<section class="page-head">
-  <h1>Nowa kampania</h1>
-  <p>Jedna kampania w jednym języku. HTML oraz plain text generują się automatycznie.</p>
-</section>
-
-{% if error %}
-  <div class="alert alert-error">{{ error }}</div>
-{% endif %}
-
-<section class="panel">
-  <form method="post" class="form-grid wide">
-    <label class="span-2">
-      Nazwa kampanii / temat emaila
-      <input name="name" value="{{ form.name if form else '' }}" required>
-    </label>
-    <label>
-      Język kampanii
-      <select name="language" required>
-        <option value="pl" {% if form and form.language == 'pl' %}selected{% endif %}>Polski</option>
-        <option value="en" {% if form and form.language == 'en' %}selected{% endif %}>English</option>
-      </select>
-    </label>
-    <label class="span-2">
-      Treść wiadomości
-      <textarea name="body" rows="16" required>{{ form.body if form else '' }}</textarea>
-    </label>
-    <div class="actions span-2">
-      <button class="button button-secondary" name="action" value="save" type="submit">Zapisz draft</button>
-      <button class="button" name="action" value="preview" type="submit">Podgląd</button>
-    </div>
-  </form>
-</section>
+<section class="page-head"><p class="eyebrow">KAMPANIA / 01 — TREŚĆ</p><h1>{{ 'Edytuj draft' if form.id else 'Nowa kampania' }}</h1><p>Spokojna, czytelna korespondencja. Jedna kampania, jeden język.</p></section>
+{% if error %}<div class="alert alert-error" role="alert">{{ error }}</div>{% endif %}
+<form method="post" enctype="multipart/form-data" class="campaign-editor" data-editor-form>
+<section class="panel form-grid wide">
+<label>Nazwa wewnętrzna<input name="name" maxlength="250" value="{{ form.name or '' }}" required><small>Widoczna tylko w panelu operatora.</small></label>
+<label>Język<select name="language" required><option value="pl" {% if form.language != 'en' %}selected{% endif %}>Polski</option><option value="en" {% if form.language == 'en' %}selected{% endif %}>English</option></select></label>
+<label class="span-2">Subject — temat dla odbiorcy<input name="subject" maxlength="250" value="{{ form.subject or '' }}" required></label>
+<label class="span-2">Nagłówek wiadomości<input name="headline" maxlength="250" value="{{ form.headline or '' }}" required></label>
+</section><section class="panel"><h2>Treść wiadomości</h2><p class="muted">Wklej tekst z Worda, przeglądarki lub ChatGPT. Zachowujemy obsługiwane formatowanie; usuwamy obce fonty, kolory i aktywny kod.</p>
+<div class="editor-toolbar" role="toolbar" aria-label="Formatowanie treści">
+<button type="button" data-command="bold" aria-label="Pogrubienie"><strong>B</strong></button><button type="button" data-command="italic" aria-label="Kursywa"><em>I</em></button><button type="button" data-command="underline" aria-label="Podkreślenie"><u>U</u></button>
+<select aria-label="Styl akapitu" data-block><option value="p">Akapit</option><option value="h2">Nagłówek 2</option><option value="h3">Nagłówek 3</option></select>
+<select aria-label="Rozmiar tekstu" data-size><option value="2">14 px</option><option value="3" selected>16 px</option><option value="4">18 px</option><option value="5">22 px</option><option value="6">28 px</option></select>
+<button type="button" data-command="insertUnorderedList" aria-label="Lista punktowana">• Lista</button><button type="button" data-command="insertOrderedList" aria-label="Lista numerowana">1. Lista</button><button type="button" data-checklist aria-label="Lista z zielonymi znacznikami">✓ Lista</button>
+<button type="button" data-link>Link</button><button type="button" data-command="unlink">Usuń link</button><button type="button" data-command="undo" aria-label="Cofnij">↶</button><button type="button" data-command="redo" aria-label="Ponów">↷</button></div>
+<div class="rich-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Treść wiadomości" data-rich-editor></div>
+<textarea name="body_html" data-rich-source rows="12" aria-label="Treść HTML">{{ form.body_html or '' }}</textarea>
+<p role="status" class="muted" data-editor-message></p><div class="link-editor" data-link-editor hidden><label>Adres linku<input type="url" data-link-url placeholder="https://…"></label><button type="button" data-link-save>Zapisz link</button><button type="button" data-link-cancel>Anuluj</button></div>
+</section><section class="panel form-grid wide"><div class="span-2"><h2>Dodaj grafikę / Upload banner</h2><p>1200 × 400 px · proporcje 3:1 · JPG lub PNG · preferowane poniżej 300 KB.<br><span class="muted">W e-mailu: do 600 px szerokości. Maksymalny upload: 5 MB. Bez kadrowania.</span></p>
+<input type="file" name="banner" accept="image/jpeg,image/png" aria-label="Dodaj grafikę / Upload banner" data-banner-input><img class="banner-preview" data-banner-preview alt="Podgląd banera kampanii" {% if form.banner_asset %}src="/campaign-assets/{{ form.banner_asset }}"{% else %}hidden{% endif %}>
+{% if form.banner_asset %}<label class="checkline"><input type="checkbox" name="remove_banner" value="1">Usuń baner z draftu (logo jako fallback)</label>{% endif %}<small>Bez banera użyjemy oryginalnego logo BHM Chemicals.</small></div>
+<div class="span-2"><h2>Przycisk CTA <span class="muted">/ opcjonalny</span></h2><button class="button button-secondary" type="button" data-default-cta>Ustaw link do produktów w języku kampanii</button></div>
+<label>Etykieta przycisku<input name="cta_label" maxlength="250" value="{{ form.cta_label or '' }}" placeholder="Zobacz produkty / Explore Products"></label><label>Docelowy URL<input name="cta_url" type="url" value="{{ form.cta_url or '' }}" placeholder="https://bhm-chemicals.com/pl/produkty/"></label>
+</section><div class="actions"><button class="button button-secondary" name="action" value="save" type="submit">Zapisz draft</button><button class="button" name="action" value="preview" type="submit">Zapisz i zobacz podgląd →</button></div></form>
 {% endblock %}
