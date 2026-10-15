@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Unsubscribe - BHM Chemicals</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+  </head>
+  <body class="unsubscribe-page">
+    <main class="unsubscribe-public">
+      <section class="unsubscribe-box{% if is_error %} unsubscribe-box-error{% endif %}">
+        <div class="unsubscribe-brand">
+          <span class="brand-mark">BHM</span>
+          <span>BHM Chemicals</span>
+        </div>
+        <h1>{{ message }}</h1>
+        {% if secondary_message %}
+          <p>{{ secondary_message }}</p>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

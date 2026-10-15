@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - BHM Chemicals Mailing Tool{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Dashboard</h1>
+  <p>Stan lokalnej bazy kontaktów i ostatnie kampanie.</p>
+</section>
+
+<section class="stats-grid">
+  <div class="stat"><span>Total</span><strong>{{ stats.total }}</strong></div>
+  <div class="stat"><span>Active</span><strong>{{ stats.active }}</strong></div>
+  <div class="stat"><span>PL</span><strong>{{ stats.pl_count }}</strong></div>
+  <div class="stat"><span>INTERNATIONAL</span><strong>{{ stats.international_count }}</strong></div>
+  <div class="stat"><span>Unsubscribed</span><strong>{{ stats.unsubscribed }}</strong></div>
+  <div class="stat"><span>Bounced / invalid</span><strong>{{ stats.bounced_invalid }}</strong></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Ostatnie kampanie</h2>
+    <a class="button button-secondary" href="/campaigns/new">Nowa kampania</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Nazwa</th>
+          <th>Status</th>
+          <th>Utworzono</th>
+          <th>Odbiorcy</th>
+          <th>Sent</th>
+          <th>Dry-run</th>
+          <th>Failed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for campaign in campaigns %}
+          <tr>
+            <td><a href="/history/{{ campaign.id }}">{{ campaign.name }}</a></td>
+            <td><span class="badge badge-{{ campaign.status }}">{{ campaign.status }}</span></td>
+            <td>{{ campaign.created_at }}</td>
+            <td>{{ campaign.recipient_count }}</td>
+            <td>{{ campaign.sent_count }}</td>
+            <td>{{ campaign.dry_run_count }}</td>
+            <td>{{ campaign.failed_count }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="empty">Brak kampanii.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

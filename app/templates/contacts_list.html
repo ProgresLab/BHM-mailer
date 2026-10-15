@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Kontakty - BHM Chemicals Mailing Tool{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Kontakty</h1>
+  <p>Filtry, checkboxy i ręczna zmiana statusu bez fizycznego usuwania rekordów.</p>
+</section>
+
+<section class="panel">
+  <form method="get" class="filters">
+    <label>
+      Grupa
+      <select name="country_group">
+        <option value="">Wszystkie</option>
+        <option value="PL" {% if filters.country_group == 'PL' %}selected{% endif %}>Polska</option>
+        <option value="INTERNATIONAL" {% if filters.country_group == 'INTERNATIONAL' %}selected{% endif %}>Poza Polską</option>
+      </select>
+    </label>
+    <label>
+      Język
+      <select name="language">
+        <option value="">Wszystkie</option>
+        <option value="pl" {% if filters.language == 'pl' %}selected{% endif %}>pl</option>
+        <option value="en" {% if filters.language == 'en' %}selected{% endif %}>en</option>
+      </select>
+    </label>
+    <label>
+      Status
+      <select name="status">
+        <option value="">Wszystkie</option>
+        {% for status in ['active', 'unsubscribed', 'bounced', 'invalid'] %}
+          <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>{{ status }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Industry
+      <select name="industry">
+        <option value="">Wszystkie</option>
+        {% for row in industries %}
+          <option value="{{ row.industry }}" {% if filters.industry == row.industry %}selected{% endif %}>{{ row.industry }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Search
+      <input type="search" name="search" value="{{ filters.search }}">
+    </label>
+    <button class="button button-secondary" type="submit">Filtruj</button>
+  </form>
+</section>
+
+<section class="panel">
+  <form method="post" action="/contacts/bulk">
+    <div class="bulkbar">
+      <label class="checkline"><input type="checkbox" data-select-all="contact-checkbox"> Zaznacz widoczne</label>
+      <select name="bulk_action" required>
+        <option value="">Akcja masowa</option>
+        <option value="set_pl">Ustaw PL</option>
+        <option value="set_international">Ustaw INTERNATIONAL</option>
+        <option value="active">Ustaw active</option>
+        <option value="unsubscribed">Ustaw unsubscribed</option>
+        <option value="invalid">Ustaw invalid</option>
+      </select>
+      <button class="button" type="submit">Zastosuj</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Email</th>
+            <th>Firma</th>
+            <th>Industry</th>
+            <th>Grupa</th>
+            <th>Język</th>
+            <th>Status</th>
+            <th>Ostatni email</th>
+            <th>Źródło</th>
+            <th>Akcja</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for contact in contacts %}
+            <tr>
+              <td><input class="contact-checkbox" type="checkbox" name="contact_ids" value="{{ contact.id }}"></td>
+              <td>{{ contact.email }}</td>
+              <td>{{ contact.company_name or '' }}</td>
+              <td>{{ contact.industry or '' }}</td>
+              <td>{{ contact.country_group }}</td>
+              <td>{{ contact.language }}</td>
+              <td><span class="badge badge-{{ contact.status }}">{{ contact.status }}</span></td>
+              <td>{{ contact.last_sent_at | datetime_short }}</td>
+              <td>{{ contact.source or '' }}{% if contact.source_sheet %} / {{ contact.source_sheet }}{% endif %}</td>
+              <td><a class="button button-secondary button-small" href="/contacts/{{ contact.id }}/edit">Edit</a></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="10" class="empty">Brak kontaktów dla wybranych filtrów.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </form>
+</section>
+{% endblock %}

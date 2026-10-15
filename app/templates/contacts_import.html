@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Import kontaktów - BHM Chemicals Mailing Tool{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Import kontaktów</h1>
+  <p>Wklej adresy lub załaduj XLSX. Import nie przywraca kontaktów wypisanych, bounced ani invalid do active.</p>
+</section>
+
+{% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<section class="panel">
+  <form method="post" enctype="multipart/form-data" class="form-grid">
+    <label>
+      Tryb grupy
+      <select name="country_group_mode">
+        <option value="AUTO">Auto</option>
+        <option value="PL">Polska</option>
+        <option value="INTERNATIONAL">Poza Polską</option>
+      </select>
+    </label>
+    <label class="span-2">
+      Import przez kopiuj-wklej
+      <textarea name="paste_text" rows="9" placeholder="adres@example.com&#10;drugi@example.pl; trzeci@example.com"></textarea>
+    </label>
+    <label class="span-2">
+      Import pliku XLSX
+      <input type="file" name="xlsx_file" accept=".xlsx">
+    </label>
+    <div class="actions span-2">
+      <button class="button" type="submit">Importuj kontakty</button>
+      <a class="button button-secondary" href="/contacts">Lista kontaktów</a>
+    </div>
+  </form>
+</section>
+
+{% if report %}
+<section class="panel">
+  <h2>Raport importu</h2>
+  <div class="stats-grid compact">
+    <div class="stat"><span>Dodane</span><strong>{{ report.added }}</strong></div>
+    <div class="stat"><span>Zaktualizowane</span><strong>{{ report.updated }}</strong></div>
+    <div class="stat"><span>Duplikaty</span><strong>{{ report.duplicates }}</strong></div>
+    <div class="stat"><span>Błędne adresy</span><strong>{{ report.invalid_count }}</strong></div>
+    <div class="stat"><span>Pominięte unsubscribed</span><strong>{{ report.skipped_unsubscribed }}</strong></div>
+    <div class="stat"><span>Pominięte invalid/bounced</span><strong>{{ report.skipped_invalid_or_bounced }}</strong></div>
+  </div>
+  {% if report.invalid_emails %}
+    <h3>Błędne adresy</h3>
+    <p class="muted">{{ report.invalid_emails[:30] | join(', ') }}</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

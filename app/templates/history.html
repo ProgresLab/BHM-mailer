@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}History - BHM Chemicals Mailing Tool{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>History</h1>
+  <p>Campaign status, SMTP acceptance, trace verification and saved send snapshots.</p>
+</section>
+
+<section class="panel">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Campaign</th>
+          <th>Subject</th>
+          <th>Lang</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Approved</th>
+          <th>Completed</th>
+          <th>Total</th>
+          <th>Pending</th>
+          <th>Dry-run</th>
+          <th title="SMTP provider accepted the message, not final delivery.">Accepted by SMTP</th>
+          <th>SMTP Failed</th>
+          <th>Rate Limited</th>
+          <th>Delivery Pending</th>
+          <th title="Trace confirms delivery.">Delivered by Trace</th>
+          <th title="Trace confirms failure.">Failed by Trace</th>
+          <th>Quarantined</th>
+          <th>Bounced Later</th>
+          <th>Skipped</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in campaigns %}
+          <tr data-campaign-summary-id="{{ item.id }}">
+            <td><a href="/history/{{ item.id }}">{{ item.name }}</a></td>
+            <td>{{ item.subject or item.subject_pl or item.subject_en or item.name }}</td>
+            <td>{{ item.language or '' }}</td>
+            <td><span class="badge badge-{{ item.status }}" data-campaign-status>{{ item.status }}</span></td>
+            <td>{{ item.created_at | datetime_short }}</td>
+            <td>{{ item.approved_at | datetime_short }}</td>
+            <td data-campaign-completed>{{ item.completed_at | datetime_short }}</td>
+            <td>{{ item.recipient_count }}</td>
+            <td data-counter="pending">{{ item.pending_count }}</td>
+            <td data-counter="dry_run">{{ item.dry_run_count }}</td>
+            <td data-counter="accepted_by_smtp">{{ item.accepted_smtp_count }}</td>
+            <td data-counter="smtp_failed">{{ item.smtp_failed_count }}</td>
+            <td data-counter="rate_limited">{{ item.rate_limited_count }}</td>
+            <td data-counter="delivery_pending">{{ item.delivery_pending_count }}</td>
+            <td data-counter="delivered_by_trace">{{ item.delivered_trace_count }}</td>
+            <td data-counter="failed_by_trace">{{ item.failed_trace_count }}</td>
+            <td data-counter="quarantined_by_trace">{{ item.quarantined_count }}</td>
+            <td data-counter="bounced_later">{{ item.bounced_later_count }}</td>
+            <td data-counter="skipped">{{ item.skipped_count }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="19" class="empty">No campaign history.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if campaign %}
+<section class="page-head detail-head">
+  <h1>{{ campaign.name }}</h1>
+  <p>Subject: {{ campaign.subject or campaign.subject_pl or campaign.subject_en or campaign.name }} · Language: {{ campaign.language or '' }}</p>
+</section>
+
+{% if current_smtp_config %}
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>Current SMTP configuration for new sends</h2>
+      <p class="muted">Read from the current application SMTP environment.</p>
+    </div>
+  </div>
+  <dl>
+    <dt>SMTP provider</dt><dd>{{ current_smtp_config.provider }}</dd>
+    <dt>SMTP mode</dt><dd>{{ current_smtp_config.mode }}</dd>
+    <dt>SMTP user</dt><dd>{{ current_smtp_config.smtp_user }}</dd>
+    <dt>Header From</dt><dd>{{ current_smtp_config.header_from }}</dd>
+    <dt>Reply-To</dt><dd>{{ current_smtp_config.reply_to }}</dd>
+    <dt>Envelope From</dt><dd>{{ current_smtp_config.envelope_from }}</dd>
+  </dl>
+  {% if current_smtp_config.warnings %}
+    <div class="alert">
+      {% for warning in current_smtp_config.warnings %}
+        <div>{{ warning }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>Actual SMTP identity used for this campaign/send</h2>
+      <p class="muted">Read from saved email_sends fields for the selected send.</p>
+    </div>
+  </div>
+  {% if actual_smtp_identity %}
+    {% if actual_smtp_identity.previous_settings %}
+      <div class="alert">This campaign was sent with previous SMTP settings.</div>
+    {% endif %}
+    <dl>
+      <dt>Selected send</dt><dd>#{{ actual_smtp_identity.send_id }}</dd>
+      <dt>SMTP provider</dt><dd>{{ actual_smtp_identity.provider }}</dd>
+      <dt>SMTP user</dt><dd>{{ actual_smtp_identity.smtp_user or 'Not saved' }}</dd>
+      <dt>Header From</dt><dd>{{ actual_smtp_identity.header_from or 'Not saved' }}</dd>
+      <dt>Reply-To</dt><dd>{{ actual_smtp_identity.reply_to or 'Not saved' }}</dd>
+      <dt>Envelope From</dt><dd>{{ actual_smtp_identity.envelope_from or 'Not saved' }}</dd>
+      <dt>Envelope To</dt><dd>{{ actual_smtp_identity.envelope_to or 'Not saved' }}</dd>
+      <dt>Message-ID</dt><dd>{{ actual_smtp_identity.message_id or 'Not saved' }}</dd>
+    </dl>
+  {% else %}
+    <p class="muted">No saved send identity yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel campaign-progress"
+  data-campaign-status-url="/campaigns/{{ campaign.id }}/status.json"
+  data-campaign-id="{{ campaign.id }}">
+  <div class="panel-head">
+    <div>
+      <h2>Live progress</h2>
+      <p class="muted">SMTP acceptance is not final delivery. Use Message Trace CSV for final verification.</p>
+    </div>
+    <a class="button button-secondary" href="/campaigns/{{ campaign.id }}/export.csv">Export campaign status CSV</a>
+  </div>
+  <div class="progress-meta">
+    <span>Total: <strong data-status-field="total">{{ status_data.total if status_data else sends|length }}</strong></span>
+    <span>Processed: <strong data-status-field="processed">{{ status_data.processed if status_data else 0 }}</strong></span>
+    <span>Progress: <strong data-status-field="percent">{{ status_data.percent if status_data else 0 }}</strong>%</span>
+    <span>Current: <strong data-status-field="current_email">{{ status_data.current_email if status_data else '—' }}</strong></span>
+    <span>Current status: <strong data-status-field="current_status">{{ status_data.current_status if status_data else '—' }}</strong></span>
+  </div>
+  <div class="progress-bar" aria-label="Campaign progress">
+    <div data-progress-bar style="width: {{ status_data.percent if status_data else 0 }}%"></div>
+  </div>
+  <div class="progress-meta">
+    <span>Campaign: <strong data-status-field="campaign_status">{{ status_data.campaign_status if status_data else campaign.status }}</strong></span>
+    <span>Updated: <strong data-status-field="updated_at">{{ status_data.updated_at if status_data else '—' }}</strong></span>
+    <span>Completed: <strong data-status-field="completed_at">{{ status_data.completed_at if status_data else (campaign.completed_at | datetime_short) }}</strong></span>
+  </div>
+  <p class="last-error">Last error: <span data-status-field="last_error">{{ status_data.last_error if status_data and status_data.last_error else '—' }}</span></p>
+  <div class="table-wrap">
+    <table class="compact-table">
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Status</th>
+          <th>Timestamp</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody data-live-events>
+        {% if status_data %}
+          {% for event in status_data.last_20_events %}
+            <tr>
+              <td>{{ event.email }}</td>
+              <td><span class="badge badge-{{ event.status }}">{{ event.status_label }}</span></td>
+              <td>{{ event.timestamp }}</td>
+              <td>{{ event.error }}</td>
+            </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>Import Message Trace CSV</h2>
+      <p class="muted">Matches by recipient, subject, sender identity aliases and a +/- 24h send-time window.</p>
+      <p class="muted">Header From is what the recipient usually sees. Envelope From is technical Return-Path / SMTP MAIL FROM. Trace imports may show SMTP_USER or Envelope From depending on provider processing.</p>
+    </div>
+  </div>
+  <form method="post" action="/campaigns/{{ campaign.id }}/message-trace/import" enctype="multipart/form-data" class="actions">
+    <input type="file" name="trace_csv" accept=".csv,text/csv" required>
+    <button class="button" type="submit">Import Message Trace CSV</button>
+  </form>
+</section>
+
+<section class="preview-grid single">
+  <div class="panel">
+    {% set snapshot_html = selected_send.html_snapshot if selected_send else (campaign.html or campaign.html_pl or campaign.html_en) %}
+    {% set snapshot_text = selected_send.text_snapshot if selected_send else (campaign.text or campaign.text_pl or campaign.text_en) %}
+    <h2>{% if selected_send %}Snapshot email_sends #{{ selected_send.id }}{% else %}Campaign HTML copy{% endif %}</h2>
+    {% if selected_send %}
+      <p class="muted">Recipient: {{ selected_send.email }} · Status: {{ selected_send.status | send_status_label }}</p>
+    {% endif %}
+    <iframe class="email-preview small" sandbox srcdoc="{{ snapshot_html | unsubscribe_preview | e }}"></iframe>
+    <h3>Plain text</h3>
+    <pre class="plain-text">{{ snapshot_text | unsubscribe_preview }}</pre>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Recipients and statuses</h2>
+  <p class="muted">Header From is what the recipient usually sees. Envelope From is technical Return-Path / SMTP MAIL FROM. Trace imports may show SMTP_USER or Envelope From depending on provider processing.</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Email</th>
+          <th>Company</th>
+          <th>Lang</th>
+          <th>Subject</th>
+          <th>Status</th>
+          <th>Started</th>
+          <th title="SMTP provider accepted the message, not final delivery.">Accepted by SMTP</th>
+          <th>Final</th>
+          <th>SMTP code</th>
+          <th>SMTP response</th>
+          <th>Last error</th>
+          <th>Trace status</th>
+          <th>Trace detail</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for send in sends %}
+          <tr data-send-row="{{ send.id }}">
+            <td>{{ send.email }}</td>
+            <td>{{ send.company_name or '' }}</td>
+            <td>{{ send.language }}</td>
+            <td>{{ send.subject }}</td>
+            <td data-send-status><span class="badge badge-{{ send.status }}">{{ send.status | send_status_label }}</span></td>
+            <td data-send-timestamp>{{ send.started_at | datetime_short }}</td>
+            <td>{{ send.accepted_at | datetime_short }}</td>
+            <td>{{ send.final_status_at | datetime_short }}</td>
+            <td>{{ send.smtp_code or '' }}</td>
+            <td>{{ send.smtp_response | short_text(120) }}</td>
+            <td data-send-error>{{ (send.last_error or send.error_message) | short_text(120) }}</td>
+            <td>{{ send.trace_status or '' }}</td>
+            <td>{{ send.trace_detail | short_text(120) }}</td>
+            <td>
+              <details class="send-details">
+                <summary>Show details</summary>
+                <dl>
+                  <dt>Created</dt><dd>{{ send.created_at | datetime_short }}</dd>
+                  <dt>Sent at legacy</dt><dd>{{ send.sent_at | datetime_short }}</dd>
+                  <dt>Last checked</dt><dd>{{ send.last_checked_at | datetime_short }}</dd>
+                  <dt>Attempt count</dt><dd>{{ send.attempt_count or 0 }}</dd>
+                  <dt>SMTP status</dt><dd>{{ send.status | send_status_label }}</dd>
+                  <dt>SMTP user</dt><dd>{{ send.smtp_user or '' }}</dd>
+                  <dt>Header From</dt><dd>{{ send.header_from or '' }}</dd>
+                  <dt>Reply-To</dt><dd>{{ send.reply_to or '' }}</dd>
+                  <dt>Envelope From</dt><dd>{{ send.envelope_from or '' }}</dd>
+                  <dt>Envelope To</dt><dd>{{ send.envelope_to or '' }}</dd>
+                  <dt>Message-ID</dt><dd>{{ send.message_id or send.smtp_message_id or '' }}</dd>
+                  <dt>SMTP code</dt><dd>{{ send.smtp_code or '' }}</dd>
+                  <dt>SMTP message id</dt><dd>{{ send.smtp_message_id or '' }}</dd>
+                  <dt>Provider message id</dt><dd>{{ send.provider_message_id or '' }}</dd>
+                  <dt>SMTP response</dt><dd>{{ send.smtp_response | short_text(500) }}</dd>
+                  <dt>Last error</dt><dd>{{ (send.last_error or send.error_message) | short_text(500) }}</dd>
+                  <dt>Trace status</dt><dd>{{ send.trace_status or '' }}</dd>
+                  <dt>Trace detail</dt><dd>{{ send.trace_detail | short_text(500) }}</dd>
+                </dl>
+                <a href="/history/{{ campaign.id }}?send_id={{ send.id }}">Show snapshot</a>
+              </details>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="14" class="empty">No saved sends.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

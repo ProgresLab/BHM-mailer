@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Nowa kampania - BHM Chemicals Mailing Tool{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Nowa kampania</h1>
+  <p>Jedna kampania w jednym języku. HTML oraz plain text generują się automatycznie.</p>
+</section>
+
+{% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<section class="panel">
+  <form method="post" class="form-grid wide">
+    <label class="span-2">
+      Nazwa kampanii / temat emaila
+      <input name="name" value="{{ form.name if form else '' }}" required>
+    </label>
+    <label>
+      Język kampanii
+      <select name="language" required>
+        <option value="pl" {% if form and form.language == 'pl' %}selected{% endif %}>Polski</option>
+        <option value="en" {% if form and form.language == 'en' %}selected{% endif %}>English</option>
+      </select>
+    </label>
+    <label class="span-2">
+      Treść wiadomości
+      <textarea name="body" rows="16" required>{{ form.body if form else '' }}</textarea>
+    </label>
+    <div class="actions span-2">
+      <button class="button button-secondary" name="action" value="save" type="submit">Zapisz draft</button>
+      <button class="button" name="action" value="preview" type="submit">Podgląd</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

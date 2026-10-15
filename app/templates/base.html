@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}BHM Chemicals Mailing Tool{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">BHM</span>
+          <span>Chemicals<br><small>Mailing Tool</small></span>
+        </div>
+        <nav class="nav">
+          <a href="/">Dashboard</a>
+          <a href="/contacts/import">Import kontaktów</a>
+          <a href="/contacts">Kontakty</a>
+          <a href="/campaigns/new">Nowa kampania</a>
+          <a href="/history">Historia</a>
+        </nav>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <strong>Local admin panel</strong>
+            <span>SQLite + dry-run SMTP</span>
+          </div>
+        </header>
+        {% if request.query_params.get('message') %}
+          <div class="notice">{{ request.query_params.get('message') }}</div>
+        {% endif %}
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+    <script src="{{ url_for('static', path='/app.js') }}"></script>
+  </body>
+</html>

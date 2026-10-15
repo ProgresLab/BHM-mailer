@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Edycja kontaktu - BHM Chemicals Mailing Tool{% endblock %}
+{% block content %}
+<section class="page-head">
+  <h1>Edycja kontaktu</h1>
+  <p>{{ contact.email }}</p>
+</section>
+
+{% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<section class="panel">
+  <form method="post" class="form-grid wide">
+    <label>
+      Email
+      <input name="email" type="email" value="{{ form.get('email') or '' }}" required>
+    </label>
+    <label>
+      Firma
+      <input name="company_name" value="{{ form.get('company_name') or '' }}">
+    </label>
+    <label>
+      Osoba kontaktowa
+      <input name="contact_name" value="{{ form.get('contact_name') or '' }}">
+    </label>
+    <label>
+      Industry
+      <input name="industry" value="{{ form.get('industry') or '' }}">
+    </label>
+    <label>
+      Grupa kraju
+      {% set current_group = form.get('country_group') %}
+      <select name="country_group" required>
+        <option value="PL" {% if current_group == 'PL' %}selected{% endif %}>PL</option>
+        <option value="INTERNATIONAL" {% if current_group == 'INTERNATIONAL' %}selected{% endif %}>INTERNATIONAL</option>
+      </select>
+    </label>
+    <label>
+      Język
+      {% set current_language = form.get('language') %}
+      <select name="language" required>
+        <option value="pl" {% if current_language == 'pl' %}selected{% endif %}>pl</option>
+        <option value="en" {% if current_language == 'en' %}selected{% endif %}>en</option>
+      </select>
+    </label>
+    <label>
+      Status
+      {% set current_status = form.get('status') %}
+      <select name="status" required>
+        {% for status in ['active', 'unsubscribed', 'bounced', 'invalid'] %}
+          <option value="{{ status }}" {% if current_status == status %}selected{% endif %}>{{ status }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Źródło
+      <input name="source" value="{{ form.get('source') or '' }}">
+    </label>
+    <label class="span-2">
+      Notatki
+      <textarea name="notes" rows="6">{{ form.get('notes') or '' }}</textarea>
+    </label>
+    <div class="actions span-2">
+      <button class="button" type="submit">Zapisz</button>
+      <a class="button button-secondary" href="/contacts">Anuluj</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
