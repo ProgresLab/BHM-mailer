@@ -8,6 +8,8 @@ Git tracks application source, documentation, branding assets, and the non-secre
 
 ## Setup and Run
 
+Current operator status (2026-10-16 23:33 CEST): **IMAP ON + SMTP ON**, <http://127.0.0.1:8000>, PID25844. Controlled activation and exact recovery approval completed; all old queues remain paused and no mail was sent. Use **`start-bhm-operational.bat`** after a future shutdown; do not launch another instance while8000 responds. New campaign preparation and its real-send confirmation are separate manual actions. [Activation and preservation evidence](docs/operational-preparation-2026-10-16.md). Older runtime paragraphs below are historical.
+
 For normal operation on Windows (IMAP ON + SMTP ON, separate campaign confirmation):
 
 ```powershell
@@ -241,6 +243,8 @@ Reproduce isolated acceptance with `.venv/Scripts/python -m unittest discover -s
 
 
 ### Approved operation with IMAP ON / SMTP OFF
+
+The following records the earlier IMAP-only activation. Current operational runtime is the IMAP+SMTP instance documented above; the safe-mode launcher remains available separately.
 
 Operational activation completed after explicit user approval. Actual application: `http://127.0.0.1:8000`, PID18152, launched once at 2026-10-16 21:56:40 CEST. First completed IMAP sync: 2026-10-16 21:59:55 CEST; next scheduled scan: 2026-10-16 22:14:55 CEST. Initial2173 messages produced263 review cases and0 new contact-status changes. The three old queues17/18/28 remain manually paused; no SMTP/admin attempt was made. [Activation/readback evidence](docs/imap-activation-2026-10-16.md).
 
