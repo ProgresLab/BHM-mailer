@@ -339,6 +339,27 @@ class CooldownCase(unittest.TestCase):
         self.engine.sender=self.fake_send;self.engine.tick();self.assertFalse(self.starts)
         self.assertGreater(worker.execution_payload(cid,self.clock())['next_attempt_seconds'],0)
 
+    def test_many_distinct_failures_block_before_next_smtp_attempt(self):
+        cid,ids=self.prepare(51)
+        with db.get_connection() as c:
+            sends=c.execute('SELECT id FROM email_sends ORDER BY id LIMIT 50').fetchall()
+            for (sid,) in sends:
+                c.execute("UPDATE email_sends SET status='smtp_failed' WHERE id=?",(sid,))
+                c.execute('''INSERT INTO send_attempt_history(send_id,attempt_number,mode,started,finished,status,message_id)
+                    VALUES(?,1,'smtp',?,?,'smtp_failed','<failure@example.test>')''',(sid,self.clock()-10,self.clock()-9))
+        self.engine.tick()
+        self.assertFalse(self.starts)
+        row=self.row('SELECT state,problem FROM campaign_execution')
+        self.assertEqual(row['state'],'problem');self.assertIn('50',row['problem'])
+
+    def test_verified_later_bounces_count_toward_failure_signal(self):
+        cid,ids=self.prepare(2)
+        with db.get_connection() as c:
+            sid=c.execute('SELECT id FROM email_sends ORDER BY id LIMIT 1').fetchone()[0]
+            c.execute("UPDATE email_sends SET status='bounced_later',final_status_at=? WHERE id=?",(worker.stamp(self.clock()),sid))
+            self.assertEqual(worker.recent_delivery_failures(c,self.clock()),1)
+            self.assertEqual(worker.recent_delivery_failures(c,self.clock()+3601),0)
+
 
 class SortCase(unittest.TestCase):
     setUp=fixtures.Case.setUp

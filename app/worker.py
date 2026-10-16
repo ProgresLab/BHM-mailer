@@ -24,6 +24,16 @@ MAX_AUTO_RESUMES = 3
 WINDOW_LIMITS = ((300, 20), (3600, 200))
 
 
+def recent_delivery_failures(conn, now):
+    """Account-wide distinct failures, including verified asynchronous bounces."""
+    return conn.execute('''SELECT COUNT(*) FROM (
+        SELECT send_id FROM send_attempt_history
+        WHERE mode='smtp' AND status='smtp_failed' AND started>=?
+        UNION SELECT id FROM email_sends WHERE status='bounced_later'
+        AND julianday(final_status_at)>=julianday(?)
+    )''',(now-3600,stamp(now-3600))).fetchone()[0]
+
+
 def temporary_policy(exc, detail):
     """Only definite negative replies with a narrowly safe transient cause.
 
@@ -267,6 +277,11 @@ class Engine:
             if row['mode']=='smtp' and row['identity_fingerprint'] != identity_fingerprint(settings):
                 conn.execute("UPDATE campaign_execution SET state='problem',problem='Zmieniła się tożsamość SMTP. Wysyłka zablokowana.' WHERE campaign_id=?",(cid,))
                 return
+            if row['mode']=='smtp' and recent_delivery_failures(conn,now)>=50:
+                message='Co najmniej 50 nieudanych doręczeń w ostatniej godzinie. Wymagana kontrola operatora.'
+                conn.execute("UPDATE campaign_execution SET state='problem',problem=? WHERE campaign_id=?",(message,cid))
+                event(conn,cid,now,message)
+                return
             # A missing asset blocks the queue before any SMTP attempt.
             if pending['banner_asset'] and not asset_path(pending['banner_asset']).is_file():
                 conn.execute("UPDATE campaign_execution SET state='problem',problem='Brak zapisanego banera. Przywróć asset z kopii.' WHERE campaign_id=?", (cid,))
@@ -329,7 +344,7 @@ class Engine:
                     contact_status='invalid' if mailer.looks_like_invalid_address(error) else 'bounced'
                     conn.execute("UPDATE contacts SET status=?,updated_at=? WHERE id=? AND status<>'unsubscribed'", (contact_status,stamp(end),pending['contact_id']))
                 if not recipient_failure:
-                    auto = safe and current['auto_resume_count'] < MAX_AUTO_RESUMES
+                    auto = safe and current['auto_resume_count'] < MAX_AUTO_RESUMES and recent_delivery_failures(conn,end)<50
                     message = ('Tymczasowa, potwierdzona odmowa SMTP; automatyczne wznowienie po cooldownie.' if auto else
                                'Tymczasowa odmowa SMTP wymaga operatora (polityka/limit ponowień). Sprawdź historię.' if temporary
                                else 'Problem SMTP. Sprawdź historię przed wznowieniem.')
