@@ -277,7 +277,7 @@ class Engine:
                     conn.execute('UPDATE email_sends SET outcome_uncertain=1 WHERE id=?', (pending['id'],))
                 if recipient_failure and mailer.looks_like_permanent_recipient_failure(str(code)):
                     contact_status='invalid' if mailer.looks_like_invalid_address(error) else 'bounced'
-                    conn.execute('UPDATE contacts SET status=?,updated_at=? WHERE id=?', (contact_status,stamp(end),pending['contact_id']))
+                    conn.execute("UPDATE contacts SET status=?,updated_at=? WHERE id=? AND status<>'unsubscribed'", (contact_status,stamp(end),pending['contact_id']))
                 if not recipient_failure:
                     message = ('Tymczasowa odmowa SMTP. Sprawdź limit i wznów ręcznie po cooldownie.' if temporary
                                else 'Problem SMTP. Sprawdź historię przed wznowieniem.')

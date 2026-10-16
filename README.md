@@ -172,6 +172,14 @@ start.bat                 Windows local startup helper
 - For mailing changes, verify dry-run behavior and at least one edge case before real use.
 
 
+## Gmail reconciliation (2026-10-16)
+
+Campaign38 was reconciled after its queue completed:354 contacts invalid,10 unsubscribed,430 later bounces;original1000 SMTP acceptances and1004 attempts preserved. A consistent SQLite/assets backup, isolated simulation and independent readback passed. Port8000 was unavailable before this operation and remains stopped;older activation notes below are historical. No new SMTP send,restart,migration or deploy. [Results and limitations](docs/gmail-reconciliation-2026-10-16.md).
+
+`app/reconciliation.py` deterministically parses Gmail connector MIME/RAW exports. `tools/reconcile_gmail.py` runs offline, uses the existing execution_events evidence ledger and never imports app.main or starts a worker. Gmail acquisition uses the existing authorized connector with all pages/in:anywhere, including a separate unsubscribe search for notifications sent to info@. Private exports, reports and backups must remain in ignored output/backups directories. No OAuth integration was added.
+
+For a separately authorized follow-up, first obtain fresh complete connector exports, then run `prepare` with `--database`, `--campaign`, `--input` and a new private `--manifest` path. Inspect the backup/plan/simulation before using `apply` with the same arguments. The tool refuses a noncompleted or reserved queue,missing MIME,changed input/data/assets and conflicting statuses. Exact accepted Message-ID,recipient,time and authenticated source are required;unverified records stay in the private report. Unsubscribe additionally requires the notification identity,source,token,campaign and snapshot timestamp. Same evidence replay does not duplicate changes. SMTP acceptance is never final delivery proof.
+
 ## Controlled local activation and QA
 
 Current recipient runtime diagnosis (2026-10-16): **8000 activation blocked pending approval**. PID 15184 still exposes only POST on `/campaigns/{campaign_id}/selection`; the current frontend's GET returns 405 (`Allow: POST`). Canonical source already implements the matching GET and passes QA. A restart must be separately authorized because startup updates `campaign_execution.updated` for 17/18/28 and appends three recovery events. No schema migration is needed. Keep SMTP explicitly OFF. See [confirmed runtime diagnosis and activation scope](docs/recipient-runtime-diagnosis-2026-10-16.md); earlier runtime acceptance below is historical.

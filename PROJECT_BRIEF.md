@@ -14,6 +14,8 @@ Local mailing application for importing and managing BHM Chemicals contacts, pre
 
 ## Current Status
 
+Gmail reconciliation (`BHM-GMAIL-RECONCILIATION-2026-10-16`): campaign **38** completed its queue (1000 SMTP acceptances / 1004 attempts). One-shot read-only Gmail scan: 555 unique messages, 510 DSNs + 10 verified unsubscribe events, with uncertain reports preserved privately. Verified SQLite/assets backup, isolated simulation and independent operational readback: **354 invalid, 10 unsubscribed, 430 bounced_later**, 515 appended evidence events; all SMTP acceptance/attempt history and other tables preserved. No migration, SMTP send, restart or deploy. Port 8000 was already unavailable and remains stopped. See `docs/gmail-reconciliation-2026-10-16.md`; earlier runtime status below is historical.
+
 Email renderer source update (`BHM-EMAIL-LAYOUT-2026-10-16`): new renders use a fluid 720 px card, full-width CTA with a 24 px table spacer and an 8 px outer radius. Verified only with synthetic HTML/browser fixtures and isolated tests; existing stored HTML/snapshots and operational runtime are not updated. See `docs/email-layout-qa-2026-10-16.md`.
 
 Latest verified runtime status (`BHM-RECIPIENT-RUNTIME-2026-10-16`): recipient selection on actual 8000 is **BLOCKED / needs authorized activation**. PID 15184 retains the older POST-only selection route; actual browser GET `/campaigns/32/selection` returns 405, `Allow: POST`, with zero JS errors and current JS matching disk. Canonical source already has the correct GET/explicit_add_v1 API and passes fresh isolated QA. No application/UI change is needed; controlled SMTP-OFF restart is required. Read-only copy preflight finds no migration, only `campaign_execution.updated` for 17/18/28 and three appended recovery events. This current finding supersedes earlier runtime acceptance for the recipient workflow. See `docs/recipient-runtime-diagnosis-2026-10-16.md`.
@@ -120,6 +122,18 @@ Update this brief only when project scope, status, architecture, integrations, d
 
 ## Requirements & Acceptance
 
+Gmail task G01–G07: `BHM-GMAIL-RECONCILIATION-2026-10-16`.
+
+| ID / Requirement | Implementation | Evidence | Status |
+| --- | --- | --- | --- |
+| G01 scope/queue/runtime | root/main/origin and campaign38 verified; queue completed, no SMTP attempt;8000 unavailable at entry | reconciliation report; private baseline | VERIFIED |
+| G02 complete Gmail read | four in:anywhere queries, pagination,555 unique full reads, RAW fallback; final search unchanged | private search/MIME manifests | VERIFIED at scan cutoff |
+| G03 classification/identity | deterministic MIME, exact accepted Message-ID/recipient/time, Gmail DKIM; token/source/snapshot for unsubscribe | private plan; synthetic tests | VERIFIED;72 reports retained for review |
+| G04 backup/simulation/write | consistent SQLite+2 assets; copy simulation, compare all tables, BEGIN IMMEDIATE and independent readback | private manifest/applied-readback | APPLIED:354 invalid,10 unsubscribed,430 later bounces |
+| G05 history/idempotency/exclusion | existing execution_events evidence, SMTP columns/attempts preserved, replay no-op; import/new and existing queue exclusions | private audit; tests | VERIFIED;worker priority fix source only |
+| G06 4xx diagnostics | four451/R6 failures threshold;20.0025s min,15/5min,175/h;no schedule change | redacted diagnostics and report | VERIFIED;rate alone not established as cause |
+| G07 closeout/publication | AGENTS reviewed, README/brief/report;one dated task entry;private/previous activation deltas excluded | staged/outgoing audit and fresh remote readback | Source publication;no deploy or runtime activation |
+
 Task V01–V06: `BHM-EMAIL-LAYOUT-2026-10-16` (source/rendering only; prior runtime entries remain historical).
 
 | ID / Requirement | Implementation | Evidence | Status |
@@ -176,6 +190,8 @@ Single acceptance register: R01–R15 cover `BHM-MODERNIZATION-2026-10-15`; H01�
 | S08 tests/context/Git gate | 47 isolated tests, compileall, JS syntax, 14 browser scenarios; context pack reviewed; one dated task entry; unchanged HEAD/index | `output/recipient-qa/tests.log`, `browser.json`, `closeout-gate.json`; diagnosis report | PASS local; GitHub tip refresh unavailable due network; no commit/push/deploy |
 
 ## Change Log
+
+- 2026-10-16 — `BHM-GMAIL-RECONCILIATION-2026-10-16`: Completed one authorized reconciliation for campaign38 after queue completion. Read555 unique Gmail messages with pagination/full MIME/RAW and final unchanged rescan;510 DSNs+10 verified unsubscribe events,72 uncertain reports retained privately. SQLite/assets backup and isolated simulation/readback passed;operational changes limited to354 invalid+10 unsubscribed contacts,430 bounced_later send projections and515 appended evidence events. All1000 SMTP acceptance timestamps,1004 attempt records and other tables/assets preserved;no migration. Existing ledger provides idempotent evidence;worker source now preserves unsubscribe during in-flight rejection. Four451/R6 failures specifically cite >50 failed deliveries/hour;minimum observed spacing20.0025s,15/5min,175/h,no schedule change.57 isolated tests and compileall passed. Port8000 already stopped and remains stopped;no SMTP send,restart,Gmail mutation,deploy or automation. Context Pack Closeout complete;exactly one task entry. Authorized commit/push scope excludes earlier local activation edits and all private evidence. See `docs/gmail-reconciliation-2026-10-16.md`.
 
 - 2026-10-16 — `BHM-EMAIL-LAYOUT-2026-10-16`: Limited renderer delta: 600→720 px HTML/MSO/banner, full-width centered navy CTA with 6 px corners and a real 24 px table spacer, 8 px card corners with square Outlook fallback. Validated 47 isolated tests, compileall, 10 protected-content comparisons and 30 desktop/390/360 before/after renders; screenshots reviewed. No SMTP/send, operational SQLite/assets, editor, footer, unsubscribe, history, saved HTML or snapshots changed. QA browser closed; no test server started, QA ports free. Context Pack Closeout complete; exactly one task entry. Reviewed source/docs intended for authorized origin/main publication; no deploy or operational restart. See `docs/email-layout-qa-2026-10-16.md`.
 
