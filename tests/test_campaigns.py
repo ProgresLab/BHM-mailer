@@ -341,7 +341,7 @@ class Case(unittest.TestCase):
         cid,ids=self.prepare(1000)
         breaks=[]
         previous='running'
-        for second in range(0,23000,20):
+        for second in range(0,30000,20):
             self.engine.tick()
             state=self.row('SELECT state FROM campaign_execution')['state']
             if state=='auto_break' and previous!='auto_break':breaks.append(self.clock())
@@ -353,7 +353,7 @@ class Case(unittest.TestCase):
         gaps=[b-a for a,b in zip(self.starts,self.starts[1:])]
         self.assertTrue(all(g>=20 for g in gaps))
         self.assertEqual(min(gaps),20)
-        self.assertEqual(breaks[:2],[1003600.,1007500.])
+        self.assertEqual(breaks[:2],[1001800.,1003900.])
         self.assertGreaterEqual(len(breaks),5)
         self.assertEqual(self.row('SELECT MAX(attempt_count) AS n FROM email_sends')['n'],1)
         self.assertEqual(self.row('SELECT COUNT(*) AS n FROM contacts WHERE last_sent_at IS NOT NULL')['n'],1000)
@@ -375,7 +375,7 @@ class Case(unittest.TestCase):
 
     def test_manual_pause_during_auto_break(self):
         cid,ids=self.prepare()
-        with db.get_connection() as conn:conn.execute('UPDATE campaign_execution SET cycle_seconds=3600')
+        with db.get_connection() as conn:conn.execute('UPDATE campaign_execution SET cycle_seconds=1800')
         self.engine.tick()
         self.assertEqual(self.row('SELECT state FROM campaign_execution')['state'],'auto_break')
         self.clock.advance(30);worker.pause(cid,self.clock())
@@ -476,13 +476,11 @@ class Case(unittest.TestCase):
         def fail(*a,**kw):raise smtplib.SMTPDataError(451,b'temporary rate limit')
         self.engine.sender=fail;self.engine.tick()
         self.assertEqual(self.row('SELECT status FROM email_sends ORDER BY id')['status'],'rate_limited')
-        self.assertEqual(self.row('SELECT state FROM campaign_execution')['state'],'problem')
-        with self.assertRaises(ValueError):worker.resume(cid,self.clock())
+        self.assertEqual(self.row('SELECT state FROM campaign_execution')['state'],'auto_cooldown')
         self.engine.sender=self.fake_send;self.engine.tick()
         self.assertFalse(self.starts)
         # Tick regularly during provider wait, since a real worker also checks liveness.
         for _ in range(900):self.clock.advance(1);self.engine.tick()
-        worker.resume(cid,self.clock());self.engine.tick()
         self.assertEqual(len(self.starts),1)
         with db.get_connection() as conn:
             self.assertEqual([r[0] for r in conn.execute('SELECT status FROM send_attempt_history ORDER BY id')],['rate_limited','accepted_by_smtp'])
@@ -598,7 +596,7 @@ class Case(unittest.TestCase):
 
     def test_restart_preserves_remaining_automatic_break(self):
         cid,ids=self.prepare()
-        with db.get_connection() as conn:conn.execute('UPDATE campaign_execution SET cycle_seconds=3600')
+        with db.get_connection() as conn:conn.execute('UPDATE campaign_execution SET cycle_seconds=1800')
         self.engine.tick();self.clock.advance(60);worker.recover(self.clock());worker.resume(cid,self.clock())
         self.engine.tick();self.assertFalse(self.starts)
         self.clock.advance(239);self.engine.tick();self.assertFalse(self.starts)

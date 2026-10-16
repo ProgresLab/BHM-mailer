@@ -8,18 +8,47 @@ import math
 import hashlib
 import json
 import os
+import re
 import smtplib
 import threading
 import time
 
-from . import db, mailer
+from . import db, mailer, reconciliation
 from .assets import asset_path
 
 INTERVAL = 20
-ACTIVE_PERIOD = 3600
+ACTIVE_PERIOD = 1800
 BREAK_SECONDS = 300
+MAX_AUTO_RESUMES = 3
 # Headroom for unrelated account traffic. We cannot observe other mail clients.
 WINDOW_LIMITS = ((300, 20), (3600, 200))
+
+
+def temporary_policy(exc, detail):
+    """Only definite negative replies with a narrowly safe transient cause.
+
+    Authentication/sender/policy/account failures always require an operator.
+    A disconnect/timeout, even with a stray code attribute, is never retried.
+    """
+    code = getattr(exc,'smtp_code',None)
+    if isinstance(exc,smtplib.SMTPRecipientsRefused):
+        replies=list(exc.recipients.values())
+        code=replies[0][0] if len(replies)==1 else None
+    known = isinstance(exc,(smtplib.SMTPDataError,smtplib.SMTPRecipientsRefused,
+                            smtplib.SMTPConnectError,smtplib.SMTPHeloError,
+                            smtplib.SMTPAuthenticationError,smtplib.SMTPSenderRefused))
+    definite = known and code is not None and 400 <= int(code) <= 599
+    temporary = definite and int(code)<500
+    unsafe = (isinstance(exc,(smtplib.SMTPAuthenticationError,smtplib.SMTPSenderRefused)) or
+              bool(re.search(r'4\.7\.|\[R6\]|reputation|spam|blacklist|blocklist|\bblock(?:ed|ing)?\b|'
+                             r'auth|credential|account|too many.*(?:fail|bounce)|undeliver|failed deliver|policy',detail,re.I)))
+    safe = temporary and not unsafe and bool(re.search(
+        r'\b4\.[234]\.[0-9]+\b|temporar|try (?:again )?later|greylist|graylist|rate limit|resources|server busy|service unavailable',detail,re.I))
+    wait=900
+    for match in re.finditer(r'(?:retry[- ]after\s*[:=]?|try (?:again )?in|cooldown\s*[:=]?)\s*(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)?\b',detail,re.I):
+        unit=(match[2] or 's').lower()
+        wait=max(wait,int(match[1])*(3600 if unit.startswith('h') else 60 if unit.startswith('m') else 1))
+    return code,definite,temporary,safe,wait
 
 
 def identity_fingerprint(settings):
@@ -100,12 +129,12 @@ def resume(campaign_id, now=None):
         owner = conn.execute('SELECT * FROM smtp_control WHERE id=1').fetchone()
         if owner['campaign_id'] not in {None, campaign_id}:
             raise ValueError('Inna kampania rezerwuje konto SMTP. Zakończ ją przed wznowieniem tej kolejki.')
-        if owner['blocked_until'] > now:
+        if owner['blocked_until'] > now and not row['smtp_cooldown_until']:
             raise ValueError(f"Cooldown SMTP: odczekaj jeszcze {math.ceil(owner['blocked_until']-now)} s, sprawdź problem i wznów ręcznie.")
         conn.execute('UPDATE smtp_control SET campaign_id=? WHERE id=1', (campaign_id,))
         # Only explicit operator resume retries a definite temporary rejection.
         conn.execute("UPDATE email_sends SET status='pending' WHERE campaign_id=? AND status='rate_limited' AND outcome_uncertain=0", (campaign_id,))
-        state = 'auto_break' if row['cooldown_until'] > now else 'running'
+        state = 'auto_cooldown' if row['smtp_cooldown_until'] > now else 'auto_break' if row['cooldown_until'] > now else 'running'
         conn.execute('''UPDATE campaign_execution SET manual_pause=0,state=?,updated=?,problem=''
                         WHERE campaign_id=?''', (state, now, campaign_id))
         event(conn, campaign_id, now, 'Operator wznowił pozostałą kolejkę; zachowano odstęp i cooldown.')
@@ -131,11 +160,13 @@ def resolve_uncertain(send_id, decision, note, confirmed=False, now=None):
 
 
 class Engine:
-    def __init__(self, clock=time.time, sender=None, settings=None):
+    def __init__(self, clock=time.time, sender=None, settings=None, monotonic=time.monotonic):
         self.clock = clock
         self.sender = sender or mailer.send_one_email
         self.settings = settings or mailer.get_mail_settings
         self.tick_lock = threading.Lock()
+        self.monotonic=monotonic
+        self.last_observed=monotonic()
 
     def tick(self):
         # Also protects direct/reentrant invocation within the owner process.
@@ -149,6 +180,9 @@ class Engine:
 
     def _tick(self):
         now = self.clock()
+        observed=self.monotonic()
+        slept=observed-self.last_observed>120
+        self.last_observed=observed
         with db.get_connection() as conn:
             conn.execute('BEGIN IMMEDIATE')
             control = conn.execute('SELECT * FROM smtp_control WHERE id=1').fetchone()
@@ -160,6 +194,21 @@ class Engine:
                 return
             if row['manual_pause'] or row['state'] in {'problem','interrupted'}:
                 return
+            if slept:
+                conn.execute("""UPDATE campaign_execution SET state='interrupted',manual_pause=1,updated=?,
+                    problem='Uśpienie lub przerwa workera. Sprawdź kolejkę i wznów ręcznie.' WHERE campaign_id=?""",(now,cid))
+                event(conn,cid,now,'Przerwa workera przekroczyła 120 sekund; automatyczne wznowienie zablokowane.')
+                return
+            if row['smtp_cooldown_until']:
+                if now < max(row['smtp_cooldown_until'],control['blocked_until']):
+                    return
+                if conn.execute('SELECT 1 FROM email_sends WHERE campaign_id=? AND outcome_uncertain=1',(cid,)).fetchone():
+                    conn.execute("UPDATE campaign_execution SET state='problem',problem='Wynik SMTP niepewny; bez automatycznego wznowienia.' WHERE campaign_id=?",(cid,))
+                    return
+                conn.execute("UPDATE email_sends SET status='pending' WHERE campaign_id=? AND status='rate_limited' AND outcome_uncertain=0",(cid,))
+                conn.execute("UPDATE campaign_execution SET state='running',smtp_cooldown_until=0,updated=?,problem='' WHERE campaign_id=?",(now,cid))
+                event(conn,cid,now,'Bezpieczny cooldown SMTP zakończony; automatyczne wznowienie pozostałej kolejki.')
+                row=conn.execute('SELECT * FROM campaign_execution WHERE campaign_id=?',(cid,)).fetchone()
             if row['state']=='auto_break' and now < row['cooldown_until']:
                 return
             if row['state'] == 'running' and now - row['updated'] > 120:
@@ -176,7 +225,7 @@ class Engine:
             row = conn.execute('SELECT * FROM campaign_execution WHERE campaign_id=?', (cid,)).fetchone()
             pending = conn.execute("""SELECT s.*, c.status AS contact_status FROM email_sends s
                                      JOIN contacts c ON c.id=s.contact_id
-                                     WHERE s.campaign_id=? AND s.status='pending' ORDER BY s.id LIMIT 1""", (cid,)).fetchone()
+                                     WHERE s.campaign_id=? AND s.status='pending' AND s.outcome_uncertain=0 ORDER BY s.id LIMIT 1""", (cid,)).fetchone()
             if not pending:
                 unresolved = conn.execute('SELECT 1 FROM email_sends WHERE campaign_id=? AND outcome_uncertain=1 LIMIT 1', (cid,)).fetchone()
                 if unresolved:
@@ -189,7 +238,7 @@ class Engine:
                 return
             if row['cycle_seconds'] >= ACTIVE_PERIOD:
                 conn.execute("UPDATE campaign_execution SET state='auto_break',cooldown_until=? WHERE campaign_id=?", (now + BREAK_SECONDS, cid))
-                event(conn, cid, now, 'Automatyczna przerwa 5 minut po godzinie aktywnej pracy.')
+                event(conn, cid, now, 'Automatyczna przerwa 5 minut po 30 minutach aktywnej pracy.')
                 return
             if pending['contact_status'] != 'active':
                 status = 'skipped_unsubscribed' if pending['contact_status'] == 'unsubscribed' else 'skipped_invalid'
@@ -261,15 +310,16 @@ class Engine:
                                           accepted_at=stamp(end), sent_at=stamp(end), **common)
                 mailer.mark_contact_sent(conn, pending['contact_id'], stamp(end))
             else:
-                error = mailer.smtp_exception_text(failure)[:700]
+                error = mailer.smtp_exception_text(failure)
                 # Only explicit SMTP negative replies prove non-acceptance. A transport
                 # timeout/disconnect may follow DATA acceptance and is never retried.
-                code = getattr(failure, 'smtp_code', None)
-                if isinstance(failure, smtplib.SMTPRecipientsRefused):
-                    code = next(iter(failure.recipients.values()))[0]
-                definite = code is not None and 400 <= int(code) <= 599
-                temporary = definite and 400 <= int(code) < 500
-                recipient_failure = isinstance(failure, smtplib.SMTPRecipientsRefused) and definite and not temporary
+                code,definite,temporary,safe,wait = temporary_policy(failure,error)
+                enhanced = re.search(r'\b5\.\d+\.\d+\b',error)
+                kind,target = reconciliation.classify('failed',enhanced[0] if enhanced else '',error)
+                recipient_failure = (isinstance(failure,smtplib.SMTPRecipientsRefused) and definite and not temporary
+                                     and kind != 'sender_policy' and (target is not None or
+                                     re.search(r'invalid recipient|no mailbox\b',error,re.I)) and
+                                     not re.search(r'auth|credential|account|reputation|spam|block|policy',error,re.I))
                 status = 'rate_limited' if temporary else 'smtp_failed' if definite else 'delivery_unknown'
                 mailer.update_send_status(conn, pending['id'], status, error_message=error, smtp_code=str(code or ''),
                                           final_status_at=stamp(end), **common)
@@ -279,10 +329,16 @@ class Engine:
                     contact_status='invalid' if mailer.looks_like_invalid_address(error) else 'bounced'
                     conn.execute("UPDATE contacts SET status=?,updated_at=? WHERE id=? AND status<>'unsubscribed'", (contact_status,stamp(end),pending['contact_id']))
                 if not recipient_failure:
-                    message = ('Tymczasowa odmowa SMTP. Sprawdź limit i wznów ręcznie po cooldownie.' if temporary
+                    auto = safe and current['auto_resume_count'] < MAX_AUTO_RESUMES
+                    message = ('Tymczasowa, potwierdzona odmowa SMTP; automatyczne wznowienie po cooldownie.' if auto else
+                               'Tymczasowa odmowa SMTP wymaga operatora (polityka/limit ponowień). Sprawdź historię.' if temporary
                                else 'Problem SMTP. Sprawdź historię przed wznowieniem.')
-                    conn.execute("UPDATE campaign_execution SET state='problem',problem=? WHERE campaign_id=?", (message, cid))
-                    conn.execute('UPDATE smtp_control SET blocked_until=MAX(blocked_until,?) WHERE id=1', (end + (900 if temporary else 300),))
+                    # A manual pause made while SMTP was in flight always wins.
+                    state='manual_paused' if current['manual_pause'] else 'auto_cooldown' if auto else 'problem'
+                    conn.execute('''UPDATE campaign_execution SET state=?,problem=?,smtp_cooldown_until=?,
+                        auto_resume_count=auto_resume_count+?,failure_kind=? WHERE campaign_id=?''',
+                        (state,message,end+wait if auto else 0,int(auto),str(code or '')+' '+error,cid))
+                    conn.execute('UPDATE smtp_control SET blocked_until=MAX(blocked_until,?) WHERE id=1', (end + (wait if temporary else 300),))
                     event(conn, cid, end, message)
             conn.execute('''UPDATE campaign_execution SET smtp_seconds=smtp_seconds+?,smtp_attempts=smtp_attempts+1
                             WHERE campaign_id=?''', (max(0, end-now), cid))
@@ -349,17 +405,20 @@ def execution_payload(campaign_id, now=None):
         counts = {k: int(v or 0) for k, v in dict(counts).items()}
         current = conn.execute("SELECT email FROM email_sends WHERE campaign_id=? AND status='sending' ORDER BY id LIMIT 1", (campaign_id,)).fetchone()
         next_row = conn.execute("SELECT email FROM email_sends WHERE campaign_id=? AND status='pending' ORDER BY id LIMIT 1", (campaign_id,)).fetchone()
-        events = conn.execute('SELECT created,message FROM execution_events WHERE campaign_id=? ORDER BY id DESC LIMIT 8', (campaign_id,)).fetchall()
+        counts['pending'] += conn.execute("SELECT COUNT(*) FROM email_sends WHERE campaign_id=? AND status='rate_limited' AND outcome_uncertain=0",(campaign_id,)).fetchone()[0]
+        events = conn.execute("SELECT created,message FROM execution_events WHERE campaign_id=? AND message NOT LIKE 'gmail-reconciliation-v1:%' ORDER BY id DESC LIMIT 8", (campaign_id,)).fetchall()
     active = row['active_seconds'] + (max(0, now-row['updated']) if row['state']=='running' and not row['manual_pause'] else 0)
     remaining = counts['pending'] + counts['sending']
     processed = counts['total'] - remaining
     cooldown = max(0, row['cooldown_until'] - now)
-    until_next = max(0, max(row['next_attempt'],control['next_attempt'],control['blocked_until'])-now)
+    smtp_cooldown = max(0,row['smtp_cooldown_until']-now)
+    until_next = max(0, max(row['next_attempt'],control['next_attempt'],control['blocked_until'],row['smtp_cooldown_until'])-now)
     cycle = row['cycle_seconds'] + max(0, active-row['active_seconds'])
     mean = row['smtp_seconds']/max(1,row['smtp_attempts'])
     work = max(0, remaining-1)*max(INTERVAL,mean) + (mean if remaining else 0)
-    breaks = max(0, math.floor((cycle+work)/ACTIVE_PERIOD)) if remaining else 0
-    eta = work + breaks*BREAK_SECONDS + max(cooldown,until_next)
+    future_cycle = 0 if row['cooldown_until'] else cycle
+    breaks = max(0, math.floor((future_cycle+max(0,work-0.001))/ACTIVE_PERIOD)) if remaining else 0
+    eta = work + breaks*BREAK_SECONDS + max(cooldown,smtp_cooldown,until_next)
     paused = row['manual_pause'] or row['state'] in {'problem','interrupted'}
     finished = row['state'] in {'completed','completed_with_errors'}
     if finished:
@@ -367,6 +426,9 @@ def execution_payload(campaign_id, now=None):
     return dict(execution_state=row['state'], mode=row['mode'], manual_pause=bool(row['manual_pause']),
                 elapsed_seconds=round(max(0,(row['updated'] if finished else now)-row['started'])), active_seconds=round(active),
                 cooldown_seconds=math.ceil(cooldown), next_attempt_seconds=math.ceil(until_next),
+                smtp_cooldown_seconds=math.ceil(smtp_cooldown),
+                resume_at=stamp(max(row['smtp_cooldown_until'],control['blocked_until'])) if row['smtp_cooldown_until'] else None,
+                failure_detail=row['failure_kind'], auto_resume_count=row['auto_resume_count'],
                 next_break_seconds=max(0,math.ceil(ACTIVE_PERIOD-cycle)),
                 eta_seconds=None if paused else round(eta), eta_uncertain=bool(paused),
                 eta_finish=None if paused else stamp(now+eta), problem=row['problem'],

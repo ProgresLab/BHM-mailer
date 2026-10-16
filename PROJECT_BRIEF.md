@@ -14,6 +14,8 @@ Local mailing application for importing and managing BHM Chemicals contacts, pre
 
 ## Current Status
 
+IMAP/SMTP/sorting task (`BHM-IMAP-AUTORESUME-2026-10-16`): source implementation and isolated acceptance complete; operational migration/startup pending explicit approval. IMAP TLS login with the same local SMTP credential verified; full real INBOX scan applied only on a copy: 2173 messages, 263 review cases, zero new status changes. Both available marketing folders contain zero matching info unsubscribe notifications, so automatic unsubscribe coverage is incomplete. New schedule: 20 seconds, 1800 active / 300 break; safe definite SMTP cooldown >=900 seconds, maximum three auto-resumes, R6/policy/auth/uncertainty blocked. Recipient sorting is global before pagination and retains saved selection. Fresh consistent private backups/assets verified; operational DB unchanged. See `docs/imap-sync-acceptance-2026-10-16.md`.
+
 Gmail reconciliation (`BHM-GMAIL-RECONCILIATION-2026-10-16`): campaign **38** completed its queue (1000 SMTP acceptances / 1004 attempts). One-shot read-only Gmail scan: 555 unique messages, 510 DSNs + 10 verified unsubscribe events, with uncertain reports preserved privately. Verified SQLite/assets backup, isolated simulation and independent operational readback: **354 invalid, 10 unsubscribed, 430 bounced_later**, 515 appended evidence events; all SMTP acceptance/attempt history and other tables preserved. No migration, SMTP send, restart or deploy. Port 8000 was already unavailable and remains stopped. See `docs/gmail-reconciliation-2026-10-16.md`; earlier runtime status below is historical.
 
 Email renderer source update (`BHM-EMAIL-LAYOUT-2026-10-16`): new renders use a fluid 720 px card, full-width CTA with a 24 px table spacer and an 8 px outer radius. Verified only with synthetic HTML/browser fixtures and isolated tests; existing stored HTML/snapshots and operational runtime are not updated. See `docs/email-layout-qa-2026-10-16.md`.
@@ -91,7 +93,7 @@ The app generates signed unsubscribe URLs intended for an external public endpoi
 - `accepted_by_smtp` means SMTP accepted the message, not final inbox delivery.
 - Message Trace CSV is used as a later delivery-status evidence source.
 - New migrations are additive (columns, tables and indexes); historical messages/snapshots are not regenerated. Operational activation remains a separate gate.
-- Fixed start-to-start interval: 20 seconds; automatic 300-second break after 3600 active seconds. Manual/automatic pauses do not count as active time. Legacy delay/skip environment flags cannot override this.
+- Fixed start-to-start interval: 20 seconds; automatic 300-second break after 1800 active seconds. Manual/automatic pauses do not count as active time. Legacy delay/skip environment flags cannot override this.
 - OS process lock plus SQLite singleton reservation prevent concurrent campaign workers. Resume is explicit after restart; uncertain outcomes require trace evidence or an audited operator decision.
 - Application limits use headroom: 20 attempts/5 minutes and 200/hour, sharing the ledger with admin unsubscribe notifications. External account traffic remains unknown.
 - Admin unsubscribe notifications are queued durably and processed by the same worker after campaign completion. The public token/signature contract is unchanged.
@@ -121,6 +123,20 @@ Update this brief only when project scope, status, architecture, integrations, d
 
 
 ## Requirements & Acceptance
+
+Current task I01–I09: `BHM-IMAP-AUTORESUME-2026-10-16`.
+
+| ID / Requirement | Implementation | Evidence | Status |
+| --- | --- | --- | --- |
+| I01 scope/runtime/Git | exact root/main/origin, remote 9fe9b11; no listeners 8000/8017/8018; no in-flight/reserved SMTP | private preflight and fresh GitHub settings | VERIFIED; no autodeploy found |
+| I02 safe IMAP | TLS EXAMINE/PEEK, 900 sec, bounded UID/body/batches, OS singleton, separate thread | fake IMAP/clock/restart/connection tests; real read on copy | PASS source/copy |
+| I03 classification/audit | shared MIME/DSN parser, receiver boundary and accepted attempt match, Gmail dedupe, durable audit; unsubscribe precedence | synthetic verified/forged/delay/policy/conflict/replay tests | PASS |
+| I04 unsubscribe source | both marketing folders checked; no matching info notifications; existing controlled Gmail import retained | read-only mailbox preflight | PARTIAL coverage; no invented second credential |
+| I05 SMTP pacing/recovery | 20 sec; 1800/300 active schedule; independent manual/break/cooldown/problem; limits/identity/recovery preserved | 1000 fake SMTP starts, 11 breaks, zero duplicate attempts | PASS isolated |
+| I06 safe auto-resume | >=900 sec, longer provider interval, max3; manual pause/R6/policy/auth/uncertain/restart gates | fake SMTP/clock/SQLite tests and monitor browser QA | PASS isolated |
+| I07 recipient sorting | allowlisted global SQL email/company/date, stable IDs, real acceptance/legacy support, 500/page and1000 retained | ASC/DESC pagination and Add/API/SQLite/reload/summary | PASS isolated |
+| I08 operational activation | fresh SQLite/assets backup; final migration/recovery on copy; 3 columns+3 tables+indexes and3 recovery timestamps/events | private manifests; source acceptance report | PENDING explicit operational approval |
+| I09 closeout/Git | AGENTS/README/brief updated; one dated task entry; public source allowlist, outgoing review, remote SHA readback | acceptance report and Git history | VALIDATED / cleanup complete; source handoff via Git; no deploy |
 
 Gmail task G01–G07: `BHM-GMAIL-RECONCILIATION-2026-10-16`.
 
@@ -190,6 +206,8 @@ Single acceptance register: R01–R15 cover `BHM-MODERNIZATION-2026-10-15`; H01�
 | S08 tests/context/Git gate | 47 isolated tests, compileall, JS syntax, 14 browser scenarios; context pack reviewed; one dated task entry; unchanged HEAD/index | `output/recipient-qa/tests.log`, `browser.json`, `closeout-gate.json`; diagnosis report | PASS local; GitHub tip refresh unavailable due network; no commit/push/deploy |
 
 ## Change Log
+
+- 2026-10-16 — `BHM-IMAP-AUTORESUME-2026-10-16` (2026-10-16 21:25 CEST): Implemented read-only singleton IMAP with UID/UIDVALIDITY, shared Gmail/IMAP evidence and monitoring, 20s/1800s/300s worker schedule, bounded safe 4xx auto-resume (>=900s; max3; R6/auth/policy/uncertainty blocked) and global recipient sorting with real/legacy acceptance history. 87 isolated tests and5 grouped browser scenarios, compileall and syntax checks passed; consistent SQLite/assets backup and copied migration/recovery passed. Real IMAP copy scan:2173 messages,263 review cases,0 new contact changes; no matching info unsubscribe notifications in either marketing folder. Operational database unchanged; 8000 stopped, activation awaits explicit migration/recovery approval. Public source Git handoff only; no SMTP send, queue start, .env edit or deploy. See docs/imap-sync-acceptance-2026-10-16.md.
 
 - 2026-10-16 — `BHM-GMAIL-RECONCILIATION-2026-10-16`: Completed one authorized reconciliation for campaign38 after queue completion. Read555 unique Gmail messages with pagination/full MIME/RAW and final unchanged rescan;510 DSNs+10 verified unsubscribe events,72 uncertain reports retained privately. SQLite/assets backup and isolated simulation/readback passed;operational changes limited to354 invalid+10 unsubscribed contacts,430 bounced_later send projections and515 appended evidence events. All1000 SMTP acceptance timestamps,1004 attempt records and other tables/assets preserved;no migration. Existing ledger provides idempotent evidence;worker source now preserves unsubscribe during in-flight rejection. Four451/R6 failures specifically cite >50 failed deliveries/hour;minimum observed spacing20.0025s,15/5min,175/h,no schedule change.57 isolated tests and compileall passed. Port8000 already stopped and remains stopped;no SMTP send,restart,Gmail mutation,deploy or automation. Context Pack Closeout complete;exactly one task entry. Authorized commit/push scope excludes earlier local activation edits and all private evidence. See `docs/gmail-reconciliation-2026-10-16.md`.
 

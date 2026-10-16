@@ -414,7 +414,7 @@ function duration(seconds) {
 function initMonitor() {
   const root = document.querySelector('[data-monitor-url]');
   if (!root) return;
-  const labels = {running:'Wysyłanie',manual_paused:'Ręczna pauza',auto_break:'Automatyczna przerwa',problem:'Problem — wymagana kontrola',interrupted:'Przerwane — sprawdź i wznów',completed:'Zakończone',completed_with_errors:'Zakończone z błędami'};
+  const labels = {running:'Wysyłanie',manual_paused:'Ręczna pauza',auto_break:'Automatyczna przerwa',auto_cooldown:'Tymczasowy cooldown SMTP',problem:'Problem — wymagana kontrola',interrupted:'Przerwane — sprawdź i wznów',completed:'Zakończone',completed_with_errors:'Zakończone z błędami'};
   const set = (key,value)=> {const target = root.querySelector(`[data-monitor="${key}"]`); if(target)target.textContent=String(value??'—');};
   async function poll() {
     try {
@@ -433,7 +433,7 @@ function initMonitor() {
       set('interval','20 s / jedna próba'); set('next_attempt',done?'—':duration(d.next_attempt_seconds));
       set('next_break',done?'—':d.cooldown_seconds?`Trwa przerwa: ${duration(d.cooldown_seconds)}`:duration(d.next_break_seconds));
       set('progress',d.percent+'%'); root.querySelector('[data-monitor-progress]').style.width=d.percent+'%';
-      set('notice',d.manual_pause ? (d.current_email?'Pauza zlecona — trwa kończenie rozpoczętej próby.':'Kampania oczekuje na ręczne wznowienie.') : d.execution_state==='auto_break'?`Automatyczna przerwa — wznowienie za ${duration(d.cooldown_seconds)}.`:d.problem || (done?'Kolejka zakończona. Sprawdź historię statusów.':'Kolejka pracuje w tle.'));
+      set('notice',d.manual_pause ? (d.current_email?'Pauza zlecona — trwa kończenie rozpoczętej próby.':'Kampania oczekuje na ręczne wznowienie.') : d.execution_state==='auto_cooldown'?`${d.problem} Wznowienie ${new Date(d.resume_at).toLocaleTimeString('pl-PL',{timeZone:'Europe/Warsaw'})}, za ${duration(d.smtp_cooldown_seconds)}. ${d.failure_detail}`:d.execution_state==='auto_break'?`Automatyczna przerwa — wznowienie za ${duration(d.cooldown_seconds)}.`:d.problem || (done?'Kolejka zakończona. Sprawdź historię statusów.':'Kolejka pracuje w tle.'));
       root.querySelector('[data-control="pause"]').disabled=done || d.manual_pause;
       root.querySelector('[data-control="resume"]').disabled=done || (!d.manual_pause&&!['problem','interrupted'].includes(d.execution_state));
       root.querySelector('[data-monitor-events]').innerHTML=d.recent_events.map(e=>`<li><time>${escapeHtml(new Date(e.created*1000).toLocaleTimeString('pl-PL'))}</time> ${escapeHtml(e.message)}</li>`).join('');
@@ -465,3 +465,34 @@ document.querySelector('[data-preview-images]')?.addEventListener('click',()=> {
   requestAnimationFrame(fitPreview);
 });
 initRichEditor(); initSelection(); initMonitor();
+
+
+function initMailSync() {
+  const root = document.querySelector('[data-mail-sync]');
+  if (!root) return;
+  const button = root.querySelector('button');
+  const set = (key,value) => { root.querySelector(`[data-sync="${key}"]`).textContent = value ?? '—'; };
+  const date = value => value ? new Date(value*1000).toLocaleString('pl-PL',{timeZone:'Europe/Warsaw'}) : '—';
+  let busy=false;
+  async function refresh() {
+    try {
+      const r=await fetch('/mail-sync/status.json',{cache:'no-store'});
+      if (!r.ok) throw new Error();
+      const d=await r.json();
+      set('connection',({active:'Aktywne',waiting:'Oczekiwanie na pierwszy skan',error:'Błąd',configuration_required:'Konfiguracja wymagana'})[d.connection]);
+      set('last',date(d.last_success));set('next',d.scanning?'Skanowanie…':date(d.next_sync));
+      for (const k of ['new_messages','hard_bounces','unsubscribes','reviews','alerts','contact_changes']) set(k,d[k]||0);
+      set('error',d.last_error||'Brak');set('coverage',d.unsubscribe_coverage);
+      button.disabled=busy || !d.enabled || d.connection==='configuration_required' || !!d.scanning || !!d.requested;
+    } catch { set('connection','Brak połączenia z aplikacją');button.disabled=true; }
+  }
+  button.addEventListener('click',async()=>{
+    busy=true;button.disabled=true;
+    try {
+      const r=await fetch('/mail-sync/check',{method:'POST'});
+      if (!r.ok && r.status!==409) { const d=await r.json();set('error',d.error||'Błąd zlecenia skanu'); }
+    } finally { busy=false;await refresh(); }
+  });
+  refresh();setInterval(refresh,5000);
+}
+if (document.readyState==='loading') document.addEventListener('DOMContentLoaded',initMailSync); else initMailSync();

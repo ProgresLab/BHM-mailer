@@ -138,6 +138,7 @@ def init_db() -> None:
         ensure_v11_schema(conn)
         ensure_v13_schema(conn)
         ensure_campaign_execution_schema(conn)
+        ensure_mail_sync_schema(conn)
         conn.commit()
 
 
@@ -205,6 +206,36 @@ def ensure_campaign_execution_schema(conn):
         CREATE INDEX IF NOT EXISTS idx_attempt_history_send ON send_attempt_history(send_id,id);
     ''')
     ensure_column(conn,'campaign_execution','identity_fingerprint','TEXT NULL')
+    ensure_column(conn,'campaign_execution','smtp_cooldown_until','REAL NOT NULL DEFAULT 0')
+    ensure_column(conn,'campaign_execution','auto_resume_count','INTEGER NOT NULL DEFAULT 0')
+    ensure_column(conn,'campaign_execution','failure_kind',"TEXT NOT NULL DEFAULT ''")
+
+
+def ensure_mail_sync_schema(conn):
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS mail_sync_state (
+            mailbox TEXT PRIMARY KEY, uidvalidity TEXT NOT NULL DEFAULT '',
+            last_uid INTEGER NOT NULL DEFAULT 0, last_success REAL,
+            next_sync REAL NOT NULL DEFAULT 0, scanning INTEGER NOT NULL DEFAULT 0,
+            requested INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '',
+            new_messages INTEGER NOT NULL DEFAULT 0, hard_bounces INTEGER NOT NULL DEFAULT 0,
+            unsubscribes INTEGER NOT NULL DEFAULT 0, reviews INTEGER NOT NULL DEFAULT 0,
+            alerts INTEGER NOT NULL DEFAULT 0, contact_changes INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS mail_sync_messages (
+            mailbox TEXT NOT NULL, uidvalidity TEXT NOT NULL, uid INTEGER NOT NULL,
+            processed REAL NOT NULL, disposition TEXT NOT NULL,
+            PRIMARY KEY(mailbox,uidvalidity,uid)
+        );
+        CREATE TABLE IF NOT EXISTS mail_evidence (
+            event_key TEXT PRIMARY KEY, campaign_id INTEGER, send_id INTEGER,
+            source TEXT NOT NULL, kind TEXT NOT NULL, created REAL NOT NULL,
+            evidence TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mail_evidence_campaign ON mail_evidence(campaign_id);
+        CREATE INDEX IF NOT EXISTS idx_accepted_contact ON email_sends(contact_id,accepted_at);
+        CREATE INDEX IF NOT EXISTS idx_accepted_message ON send_attempt_history(message_id,mode,status);
+    ''')
 
 
 def ensure_unique_token(conn: sqlite3.Connection) -> str:

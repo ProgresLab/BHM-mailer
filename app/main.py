@@ -14,7 +14,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse, FileResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from . import worker
+from . import worker, imap_sync
 from .assets import MAX_UPLOAD, store_banner, asset_path, banner_cid
 from .rich_text import sanitize_html, html_to_text, legacy_to_html, safe_url
 from .selection import PAGE_SIZE, selected_ids, selection_fingerprint, update_selection
@@ -193,10 +193,12 @@ templates.env.filters['epoch_utc'] = lambda value: datetime.fromtimestamp(float(
 def on_startup() -> None:
     init_db()
     worker.manager.start()
+    imap_sync.manager.start()
 
 
 @app.on_event("shutdown")
 def on_shutdown():
+    imap_sync.manager.shutdown()
     worker.manager.shutdown()
 
 
@@ -677,6 +679,20 @@ def dashboard(request: Request):
     return render_template(request, "dashboard.html", {"stats": stats, "campaigns": campaigns})
 
 
+@app.get('/mail-sync/status.json')
+def mail_sync_status():
+    return JSONResponse(imap_sync.payload(),headers={'Cache-Control':'no-store'})
+
+
+@app.post('/mail-sync/check')
+def mail_sync_check():
+    try:
+        started=imap_sync.request_scan()
+        return JSONResponse(dict(queued=started),status_code=202 if started else 409)
+    except ValueError as exc:
+        return JSONResponse(dict(error=str(exc)),status_code=400)
+
+
 @app.get("/contacts/import")
 def contacts_import_form(request: Request):
     return render_template(request, "contacts_import.html", {"report": None})
@@ -1008,7 +1024,13 @@ def campaign_reopen(campaign_id: int):
 
 @app.get('/campaigns/{campaign_id}/recipients')
 def campaign_recipients(request: Request, campaign_id: int, country_group: str='', language: str='',
-                        active_only: str='1', search: str='', page: int=1, selected_only: str='0'):
+                        active_only: str='1', search: str='', page: int=1, selected_only: str='0',
+                        sort: str='email', direction: str='asc'):
+    # SQL fragments come exclusively from this allowlist; id is the stable tie breaker.
+    ordering={'email':'c.email COLLATE NOCASE','company':'COALESCE(c.company_name,\'\') COLLATE NOCASE',
+              'last_sent':'julianday(last_smtp_at)'}
+    sort = sort if sort in ordering else 'email'
+    direction = direction if direction in {'asc','desc'} else 'asc'
     with get_connection() as conn:
         campaign = conn.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
         if not campaign:
@@ -1032,13 +1054,23 @@ def campaign_recipients(request: Request, campaign_id: int, country_group: str='
         total = conn.execute('SELECT COUNT(*) FROM contacts c'+sql,tuple(params)).fetchone()[0]
         pages = max(1,(total+PAGE_SIZE-1)//PAGE_SIZE)
         page = min(max(1,page),pages)
-        contacts = conn.execute('SELECT c.* FROM contacts c'+sql+' ORDER BY c.email,c.id LIMIT ? OFFSET ?',(*params,PAGE_SIZE,(page-1)*PAGE_SIZE)).fetchall()
+        contacts = conn.execute('''SELECT c.*,
+            (SELECT COALESCE(s.accepted_at,s.sent_at) FROM email_sends s WHERE s.contact_id=c.id
+             AND s.status<>'dry_run' AND (s.accepted_at IS NOT NULL OR (s.status='sent' AND s.sent_at IS NOT NULL))
+             AND NOT EXISTS(SELECT 1 FROM send_attempt_history a WHERE a.send_id=s.id AND a.mode='dry_run')
+             ORDER BY julianday(COALESCE(s.accepted_at,s.sent_at)) DESC,s.id DESC LIMIT 1) AS last_smtp_at,
+            (SELECT s.campaign_id FROM email_sends s WHERE s.contact_id=c.id
+             AND s.status<>'dry_run' AND (s.accepted_at IS NOT NULL OR (s.status='sent' AND s.sent_at IS NOT NULL))
+             AND NOT EXISTS(SELECT 1 FROM send_attempt_history a WHERE a.send_id=s.id AND a.mode='dry_run')
+             ORDER BY julianday(COALESCE(s.accepted_at,s.sent_at)) DESC,s.id DESC LIMIT 1) AS last_smtp_campaign
+            FROM contacts c'''+sql+f' ORDER BY {ordering[sort]} {direction.upper()},c.id ASC LIMIT ? OFFSET ?',(*params,PAGE_SIZE,(page-1)*PAGE_SIZE)).fetchall()
         selected = selected_ids(conn,campaign_id)
         eligible_count = len(selected_ids(conn,campaign_id,eligible=True))
-    filters = dict(country_group=country_group,language=language,active_only=active_only,search=search,selected_only=selected_only)
+    filters = dict(country_group=country_group,language=language,active_only=active_only,search=search,selected_only=selected_only,sort=sort,direction=direction)
+    sort_links={key:'?'+urlencode(dict(filters,sort=key,direction='desc' if sort==key and direction=='asc' else 'asc',page=1)) for key in ordering}
     links = [(p,'?'+urlencode(dict(filters,page=p))) for p in range(1,pages+1)]
     return render_template(request,'campaign_recipients.html',dict(campaign=campaign,contacts=contacts,filters=filters,
-        selected=selected,selected_count=len(selected),eligible_count=eligible_count,page=page,pages=pages,page_links=links,total=total))
+        selected=selected,selected_count=len(selected),eligible_count=eligible_count,page=page,pages=pages,page_links=links,total=total,sort_links=sort_links))
 
 
 def parse_ids(value):
@@ -1102,7 +1134,7 @@ def campaign_summary(request: Request, campaign_id: int):
         return redirect_to(f'/campaigns/{campaign_id}/recipients', message='Selekcja wymaga zatwierdzonej kampanii.')
     ids = [r['id'] for r in recipients if r['status'] == 'active']
     seconds = max(0,len(ids)-1)*20
-    seconds += (seconds//3600)*300
+    seconds += (max(0,seconds-1)//worker.ACTIVE_PERIOD)*worker.BREAK_SECONDS
     return render_template(request,'campaign_confirm.html',dict(campaign=campaign,count=len(ids),
         selected_count=len(recipients),recipients=recipients,excluded=len(recipients)-len(ids),
         fingerprint=selection_fingerprint(ids),estimate_minutes=round(seconds/60),settings=get_mail_settings()))

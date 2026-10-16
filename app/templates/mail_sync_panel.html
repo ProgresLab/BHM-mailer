@@ -1,0 +1,10 @@
+<section class="panel" data-mail-sync>
+  <div class="panel-head"><h2>Synchronizacja poczty</h2><button class="button button-secondary" type="button" disabled>Sprawdź teraz</button></div>
+  <div class="monitor-details">
+    {% for key,label in [('connection','Połączenie IMAP'),('last','Ostatnia udana synchronizacja'),('next','Następna synchronizacja'),('new_messages','Nowe wiadomości — łącznie'),('hard_bounces','Rozpoznane hard bounce'),('unsubscribes','Zweryfikowane unsubscribe'),('reviews','Do ręcznej weryfikacji'),('alerts','Alerty reputacji / polityki'),('contact_changes','Zmiany statusów kontaktów'),('error','Ostatni błąd')] %}
+    <div><span>{{ label }}</span><strong data-sync="{{ key }}">—</strong></div>
+    {% endfor %}
+  </div>
+  <p class="muted">IMAP co 15 minut, gdy aplikacja i komputer działają. Odczyt EXAMINE/PEEK bez zmian w skrzynce. Liczniki obejmują unikalne zdarzenia od aktywacji tej skrzynki; duplikaty Gmail nie zwiększają liczby zmian.</p>
+  <p class="alert" data-sync="coverage"></p>
+</section>

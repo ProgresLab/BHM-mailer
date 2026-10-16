@@ -62,8 +62,52 @@ def raw_payload(encoded):
             body = msg.get_payload(decode=True) or b''
             node['body'] = dict(content=body.decode(msg.get_content_charset() or 'utf-8', 'replace'))
         return node
-    return convert(BytesParser(policy=policy.default).parsebytes(
-        base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4))))
+    raw = encoded if isinstance(encoded, bytes) else base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4))
+    return convert(BytesParser(policy=policy.default).parsebytes(raw))
+
+
+def imap_authenticated(part, mailbox):
+    """Trust only the inspected one.com receiver segment, never forwarded verdicts.
+
+    The top storage Received and the next ingress Received delimit the server's
+    Authentication-Results. A sender-supplied verdict below ingress is ignored.
+    Unknown routing/layout/domain fails closed. This adapter is one.com specific.
+    """
+    hs = part.get('headers', [])
+    received = [(i, h['value'].lower()) for i,h in enumerate(hs) if h['name'].lower() == 'received']
+    if len(received) < 2:
+        return False
+    (start, storage), (end, ingress) = received[:2]
+    route = re.search(r'\bfrom (mx\d+)\.cst\.(mailpod[\w-]+\.one\.com)\b', storage)
+    if not route or not re.search(r'\bby mailstorage\d+\.cst\.' + re.escape(route[2]) + r'\b', storage):
+        return False
+    receiver = route[1] + '.pub.' + route[2]
+    if not re.search(r'\bby ' + re.escape(receiver) + r'\b', ingress):
+        return False
+    verdicts = [h['value'].lower() for h in hs[start+1:end] if h['name'].lower() == 'authentication-results']
+    if len(verdicts) != 1 or verdicts[0].split(';',1)[0].strip() != receiver:
+        return False
+    if headers(part,'Delivered-To') != [mailbox]:
+        return False
+    sender = parseaddr(header(part,'From'))[1].lower()
+    domain = sender.rsplit('@',1)[-1]
+    # Only verified provider DSNs or the established notification identity.
+    if domain != 'one.com' and sender != 'info@bhm-chemicals.com':
+        return False
+    if domain == 'one.com' and headers(part,'Return-Path') != ['<>']:
+        return False
+    return any(re.search(r'\bdkim=pass\b[^;]*\bheader\.d=' + re.escape(domain) + r'(?:\s|;|$)', clause)
+               for clause in verdicts[0].split(';'))
+
+
+def canonical_key(e):
+    identity = [normalize_id(e.get('report_id') or ''), e.get('recipient','').lower(),
+                e.get('action'), e.get('status'), ' '.join((e.get('diagnostic') or '').split())]
+    if not identity[0]:
+        identity[0] = json.dumps([e.get('original_message_ids'),e.get('date')],sort_keys=True)
+    key = hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
+    # Untrusted reports cannot suppress a later trusted copy of the same report.
+    return key + (':review' if e.get('kind','').startswith('review') else '')
 
 
 def authenticated(part):
@@ -92,6 +136,8 @@ def addresses(value):
 
 def classify(action, status, diagnostic):
     detail = ' '.join(diagnostic.lower().split())
+    if status.startswith(('4.7','5.7')) or re.search(r'\[r6\]|spam|blacklist|blocklist|sender.*blocked|reputation|relay access denied|policy reasons', detail):
+        return 'sender_policy', None
     if action == 'delayed' or status.startswith('4'):
         return 'delayed', None
     if action != 'failed':
@@ -113,6 +159,8 @@ def classify(action, status, diagnostic):
             r'recipientnotfound|recipient (?:not found|does not exist)|no mailbox here|'
             r'address not found|invalid mailbox|not listed in .*directory', detail):
         return 'invalid_mailbox', 'invalid'
+    if status in {'5.2.1', '5.1.6'}:
+        return 'hard_bounce', 'bounced'
     return 'review', None
 
 
@@ -151,8 +199,9 @@ def ensure_idle(conn, campaign_id):
     return campaign
 
 
-def plan(conn, campaign_id, messages):
-    ensure_idle(conn, campaign_id)
+def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-chemicals.com'):
+    if source == 'gmail':
+        ensure_idle(conn, campaign_id)
     sends = [dict(r) for r in conn.execute('''SELECT s.*,c.status contact_status,c.unsubscribe_token
         FROM email_sends s JOIN contacts c ON c.id=s.contact_id WHERE campaign_id=?''', (campaign_id,))]
     by_email = {s['email'].lower(): s for s in sends}
@@ -164,10 +213,14 @@ def plan(conn, campaign_id, messages):
     prior = set()
     for r in conn.execute('SELECT message FROM execution_events WHERE campaign_id=?', (campaign_id,)):
         if r[0].startswith(PREFIX):
-            prior.add(json.loads(r[0][len(PREFIX):])['key'])
+            saved = json.loads(r[0][len(PREFIX):])
+            prior.update((saved['key'], canonical_key(saved)))
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name='mail_evidence'").fetchone():
+        prior.update(r[0] for r in conn.execute('SELECT event_key FROM mail_evidence WHERE campaign_id=?',(campaign_id,)))
     events, seen = [], set()
     for message in messages:
         root = message.get('payload') or {}
+        trusted = authenticated(root) if source == 'gmail' else imap_authenticated(root, mailbox)
         base = dict(gmail_id=message['id'], date=message.get('internal_date'),
                     report_id=header(root, 'Message-ID'), source=header(root, 'From'))
         report_time = int(message.get('internal_date') or 0) / 1000
@@ -183,12 +236,12 @@ def plan(conn, campaign_id, messages):
                     refs |= message_ids(header(child, 'Message-ID'))
         records = dsn_records(root)
         # Notifications go to info@ and are separate from forwarded marketing DSNs.
-        body = text(root)
+        body = next((text(p) for p in walk(root) if text(p).startswith('Unsubscribe request')), text(root))
         if body.startswith('Unsubscribe request'):
             fields = dict(re.findall(r'^([^\r\n:]+):\s*([^\r\n]*)', body, re.M))
             recipient = fields.get('Email', '').strip().lower()
             s = by_email.get(recipient)
-            valid = (s and authenticated(root) and
+            valid = (s and trusted and
                 parseaddr(header(root, 'From'))[1].lower() == 'info@bhm-chemicals.com' and
                 fields.get('Source') == 'unsubscribe.mail.bhm-chemicals.com' and
                 fields.get('Campaign ID') == str(campaign_id) and
@@ -211,11 +264,11 @@ def plan(conn, campaign_id, messages):
                 kind, target = classify(action, status, diagnostic)
                 s, started = next(iter(unique.values())) if len(unique) == 1 else (None, None)
                 routed = 'marketing@bhm-chemicals.com' in ' '.join(header(root, k).lower() for k in ('To', 'X-Forwarded-for', 'X-HalOne-Forwarded-For'))
-                verified = s is not None and authenticated(root) and routed and report_time >= started
+                verified = s is not None and trusted and routed and report_time >= started
                 events.append(dict(base, recipient=next(iter(sorted(recipient_set)), ''),
                     send_id=s['id'] if s else None,
                     kind=kind if verified else 'review_unverified_dsn', target=target if verified else None,
-                    bounce=bool(verified and action == 'failed'), action=action, status=status,
+                    bounce=bool(verified and action == 'failed' and (source == 'gmail' or target is not None)), action=action, status=status,
                     original_recipient=str(record.get('Original-Recipient', '')),
                     final_recipient=str(record.get('Final-Recipient', '')),
                     original_message_ids=sorted(refs), diagnostic=diagnostic,
@@ -228,15 +281,24 @@ def plan(conn, campaign_id, messages):
     for e in events:
         identity = [e['report_id'] or e['gmail_id'], e['recipient'], e.get('action'), e.get('status'), e.get('diagnostic'), e['kind']]
         e['key'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
-        e['duplicate'] = e['key'] in seen or e['key'] in prior
+        e['canonical_key'] = canonical_key(e)
+        e['duplicate'] = e['key'] in seen or e['key'] in prior or e['canonical_key'] in prior or e['canonical_key'] in seen
         # Unrelated messages/unknown recipients stay only in the private report.
         e['persist'] = e['send_id'] is not None
         seen.add(e['key'])
+        seen.add(e['canonical_key'])
     changes, bounce_sends = {}, {}
     for e in events:
         if e['duplicate'] or e['send_id'] is None:
             continue
         s = next(s for s in sends if s['id'] == e['send_id'])
+        if source == 'imap' and e['bounce'] and s['status'] not in {'accepted_by_smtp','sent','bounced_later'}:
+            e.update(kind='review_conflicting_history',target=None,bounce=False,
+                     reason='Conflicting historical evidence; operator review required')
+            e['canonical_key']=canonical_key(e)
+            e['duplicate']=e['canonical_key'] in prior or e['canonical_key'] in seen
+            seen.add(e['canonical_key'])
+            continue
         if e['target']:
             new = e['target']
             old = s['contact_status']
@@ -252,7 +314,7 @@ def plan(conn, campaign_id, messages):
             bounce_sends[s['id']] = dict(send_id=s['id'], old_status=s['status'],
                 old_trace=[s[k] for k in ('trace_status','trace_detail','trace_source','final_status_at','last_checked_at')],
                 new_status='bounced_later', evidence_key=e['key'], gmail_id=e['gmail_id'], diagnostic=e['reason'])
-    return dict(campaign_id=campaign_id, message_count=len(messages), events=events,
+    return dict(campaign_id=campaign_id, source=source, message_count=len(messages), events=events,
                 contacts=list(changes.values()), sends=list(bounce_sends.values()),
                 counts=dict(Counter(e['kind'] for e in events if not e['duplicate'])))
 
@@ -260,7 +322,8 @@ def plan(conn, campaign_id, messages):
 def apply(conn, proposal, now=None):
     """Caller owns transaction; abort on any optimistic conflict. Never migrate."""
     cid = proposal['campaign_id']
-    ensure_idle(conn, cid)
+    if proposal.get('source','gmail') == 'gmail':
+        ensure_idle(conn, cid)
     for event in proposal['events']:
         if event['persist'] and not event['duplicate'] and conn.execute('SELECT 1 FROM execution_events WHERE campaign_id=? AND message LIKE ? LIMIT 1',
                 (cid, PREFIX + '%"key": "' + event['key'] + '"%')).fetchone():
@@ -281,11 +344,15 @@ def apply(conn, proposal, now=None):
             raise ValueError('Send evidence changed after planning')
         conn.execute('''UPDATE email_sends SET status='bounced_later',trace_status='failed',trace_detail=?,
             trace_source=?,final_status_at=?,last_checked_at=? WHERE id=?''',
-            (change['diagnostic'], 'gmail:' + change['gmail_id'], now, now, change['send_id']))
+            (change['diagnostic'], proposal.get('source','gmail') + ':' + change['gmail_id'], now, now, change['send_id']))
     for event in proposal['events']:
         if event['duplicate'] or not event['persist']:
             continue
-        audit = dict(event, contact_changes=[c for c in proposal['contacts'] if c['evidence_key']==event['key']],
+        audit = dict(event, source_transport=proposal.get('source','gmail'), contact_changes=[c for c in proposal['contacts'] if c['evidence_key']==event['key']],
                      send_changes=[s for s in proposal['sends'] if s['evidence_key']==event['key']])
         conn.execute('INSERT INTO execution_events(campaign_id,created,message) VALUES(?,?,?)',
                      (cid, datetime.fromisoformat(now).timestamp(), PREFIX + json.dumps(audit, sort_keys=True)))
+        if proposal.get('source','gmail') == 'imap' and conn.execute("SELECT 1 FROM sqlite_master WHERE name='mail_evidence'").fetchone():
+            conn.execute('''INSERT INTO mail_evidence(event_key,campaign_id,send_id,source,kind,created,evidence)
+                VALUES(?,?,?,?,?,?,?)''',(event['canonical_key'],cid,event['send_id'],proposal.get('source','gmail'),
+                event['kind'],datetime.fromisoformat(now).timestamp(),json.dumps(audit,sort_keys=True)))

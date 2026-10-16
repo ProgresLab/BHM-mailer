@@ -44,7 +44,9 @@ Choose the smallest useful validation for the change:
 - `tools/qa_server.py` is the synthetic visual-QA launcher (port 8017, SMTP forced off); it never targets operational SQLite.
 - Recipient regression QA uses `tools/recipient_qa_server.py` (8018, separate synthetic SQLite, SMTP OFF) and `tools/recipient_browser_qa.cjs`. Checkbox changes are temporary; only explicit Add persists. Add is cumulative; Remove and confirmed Clear are the only deletion paths. Keep the frontend/backend workflow compatibility gate.
 - Preserve immutable campaign assets together with database backups. Do not delete assets referenced by drafts or historical snapshots.
-- Keep the 20-second worker interval, 3600 active / 300 break contract, explicit restart recovery and uncertainty gate. Do not restore direct SMTP calls outside the singleton worker.
+- Keep the 20-second worker interval, 1800 active / 300 break contract, explicit restart recovery and uncertainty gate. Do not restore direct SMTP calls outside the singleton worker.
+- IMAP uses a separate OS-locked thread, EXAMINE/PEEK only, durable UID/UIDVALIDITY and shared Gmail evidence deduplication. Unknown receiver headers, unmatched attempts and conflicting evidence require review. Keep IMAP off in unrelated QA; `tools/sync_qa_server.py` uses fake IMAP on 8019, SMTP OFF.
+- Safe definite 4xx cooldown is at least 900 seconds with at most three automatic resumes per queue; R6/reputation/authentication/uncertain outcomes require an operator. Manual pause and process recovery always win.
 - Operational migration/activation requires a separately authorized backup and copied-database preflight. A running older process is not proof of the new source behavior.
 - Material tasks maintain one `Requirements & Acceptance` register and exactly one dated task entry in `PROJECT_BRIEF.md → Change Log`.
 

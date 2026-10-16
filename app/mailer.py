@@ -846,7 +846,7 @@ def sanitize_log_text(value: object) -> str | None:
     if value is None:
         return None
     text = str(value)
-    for env_name in ("SMTP_PASSWORD", "UNSUBSCRIBE_SECRET"):
+    for env_name in ("SMTP_PASSWORD", "IMAP_PASSWORD", "UNSUBSCRIBE_SECRET"):
         secret = os.getenv(env_name, "")
         if secret and len(secret) >= 4:
             text = text.replace(secret, "[redacted]")
@@ -862,6 +862,9 @@ def decode_smtp_response(value: object) -> str:
 
 
 def smtp_exception_text(exc: Exception) -> str:
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return sanitize_log_text('; '.join(f'{code} {decode_smtp_response(reply)}'
+            for code,reply in exc.recipients.values())) or ''
     smtp_code = getattr(exc, "smtp_code", None)
     smtp_error = getattr(exc, "smtp_error", None)
     response = decode_smtp_response(smtp_error)
