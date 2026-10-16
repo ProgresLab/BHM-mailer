@@ -14,6 +14,8 @@ Local mailing application for importing and managing BHM Chemicals contacts, pre
 
 ## Current Status
 
+Email renderer source update (`BHM-EMAIL-LAYOUT-2026-10-16`): new renders use a fluid 720 px card, full-width CTA with a 24 px table spacer and an 8 px outer radius. Verified only with synthetic HTML/browser fixtures and isolated tests; existing stored HTML/snapshots and operational runtime are not updated. See `docs/email-layout-qa-2026-10-16.md`.
+
 Latest verified runtime status (`BHM-RECIPIENT-RUNTIME-2026-10-16`): recipient selection on actual 8000 is **BLOCKED / needs authorized activation**. PID 15184 retains the older POST-only selection route; actual browser GET `/campaigns/32/selection` returns 405, `Allow: POST`, with zero JS errors and current JS matching disk. Canonical source already has the correct GET/explicit_add_v1 API and passes fresh isolated QA. No application/UI change is needed; controlled SMTP-OFF restart is required. Read-only copy preflight finds no migration, only `campaign_execution.updated` for 17/18/28 and three appended recovery events. This current finding supersedes earlier runtime acceptance for the recipient workflow. See `docs/recipient-runtime-diagnosis-2026-10-16.md`.
 
 The repo contains a local FastAPI application with SQLite persistence, Jinja templates, XLSX import, controlled rich text, private campaign banners/CID, draft editing and approval, persistent recipient selection (500/page, maximum 1000), a single sequential worker, durable pause/recovery, a separate monitor, per-attempt history, CSV export and Message Trace import. Modernization is implemented locally and validated with synthetic data, fake SMTP and isolated SQLite. During the subsequent HTTP-500 diagnosis, operational SQLite already had the modernized schema; this task performed no migration. After a verified backup and explicitly approved recovery, current code is running on port 8000 with process-level SMTP OFF; `/campaigns/new` returns HTTP 200 and passed actual desktop/mobile editor checks. Only the approved three execution timestamps and six new recovery events changed in operational SQLite; contacts, campaign content and message history matched the backup. See `docs/http500-diagnosis-2026-10-15.md`.
@@ -118,6 +120,17 @@ Update this brief only when project scope, status, architecture, integrations, d
 
 ## Requirements & Acceptance
 
+Task V01–V06: `BHM-EMAIL-LAYOUT-2026-10-16` (source/rendering only; prior runtime entries remain historical).
+
+| ID / Requirement | Implementation | Evidence | Status |
+| --- | --- | --- | --- |
+| V01 width/responsiveness | 720 px card/MSO/banner, original padding, fluid mobile | 1200/390/360 browser measurements, 3:1 image | VERIFIED Chromium |
+| V02 CTA/spacing | 100% content width, white centered text, navy, 6 px radius, table spacer 24 px | CTA 662/308/278 px; gap 24 px at all sizes | VERIFIED Chromium; native Outlook untested |
+| V03 outer frame | 8 px radius, original white/grey/border, square fallback | screenshots and simulated radius-disabled render | VERIFIED Chromium; native Outlook untested |
+| V04 protected elements | same text/links/CIDs/plain text/footer/logo, no saved HTML rewrite | 10 comparative fixtures and 47 isolated regressions | VERIFIED source/synthetic only |
+| V05 evidence/cleanup | 30 before/after renders, screenshot review; browser closed, no test server | layout report; ports 8017/8018/8019 free | COMPLETE; operational 8000 not controlled |
+| V06 closeout/publication | AGENTS reviewed, README/brief/report updated, one task entry; exclude prior local activation edits | layout report; reviewed staged diff and Git history | Source-only publication; no deploy/activation |
+
 Current task D01–D06: `BHM-RECIPIENT-RUNTIME-2026-10-16`; operational acceptance remains BLOCKED until separately authorized activation. Earlier R/H/S acceptance is historical and scoped as recorded.
 
 | ID / Requirement | Implementation | Evidence | Status |
@@ -163,6 +176,8 @@ Single acceptance register: R01–R15 cover `BHM-MODERNIZATION-2026-10-15`; H01�
 | S08 tests/context/Git gate | 47 isolated tests, compileall, JS syntax, 14 browser scenarios; context pack reviewed; one dated task entry; unchanged HEAD/index | `output/recipient-qa/tests.log`, `browser.json`, `closeout-gate.json`; diagnosis report | PASS local; GitHub tip refresh unavailable due network; no commit/push/deploy |
 
 ## Change Log
+
+- 2026-10-16 — `BHM-EMAIL-LAYOUT-2026-10-16`: Limited renderer delta: 600→720 px HTML/MSO/banner, full-width centered navy CTA with 6 px corners and a real 24 px table spacer, 8 px card corners with square Outlook fallback. Validated 47 isolated tests, compileall, 10 protected-content comparisons and 30 desktop/390/360 before/after renders; screenshots reviewed. No SMTP/send, operational SQLite/assets, editor, footer, unsubscribe, history, saved HTML or snapshots changed. QA browser closed; no test server started, QA ports free. Context Pack Closeout complete; exactly one task entry. Reviewed source/docs intended for authorized origin/main publication; no deploy or operational restart. See `docs/email-layout-qa-2026-10-16.md`.
 
 - 2026-10-16 — `BHM-SOURCE-PUBLISH-2026-10-16`: User authorized commit/push of the accumulated reviewed BHM Mailer source to origin/main (modernization, recipient workflow, regressions, synthetic QA tools and runtime diagnosis). Release preflight confirmed exact root/branch/fetch+push remote and remote main at 37ce3a7; 39 source/config/docs/test files, no secret matches or private runtime paths. Existing evidence: 47 isolated tests, 14 browser scenarios and syntax checks. Git records the resulting commit and remote verification; this source publication does not authorize restart, operational writes, SMTP, deployment or activation of the blocked port-8000 workflow. Context Pack reviewed; existing activation gate remains in force.
 

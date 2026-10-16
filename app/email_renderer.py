@@ -104,14 +104,16 @@ def render_cta_html(label: str | None, url: str | None) -> str:
     if not label or not safe_url(url or ""):
         return ""
     return f"""
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:26px 0 4px 0;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:separate;border-spacing:0;">
+      <tr><td height="26" style="height:26px;font-size:0;line-height:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
       <tr>
-        <td bgcolor="#11263A" style="padding:13px 20px;border-radius:4px;">
-          <a href="{escape(url, quote=True)}" style="display:inline-block;color:#FFFFFF;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;text-decoration:none;border-radius:4px;">
+        <td align="center" bgcolor="#11263A" style="border-radius:6px;mso-padding-alt:13px 20px;">
+          <a href="{escape(url, quote=True)}" style="display:block;padding:13px 20px;mso-padding-alt:0;text-align:center;color:#FFFFFF;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;text-decoration:none;border-radius:6px;">
             {escape(label)}
           </a>
         </td>
       </tr>
+      <tr><td height="24" style="height:24px;font-size:0;line-height:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
     </table>
     """.strip()
 
@@ -155,14 +157,14 @@ def render_brand_header_html() -> str:
     """.strip()
 
 
-def render_contact_html(language: str) -> str:
+def render_contact_html(language: str, *, after_cta: bool = False) -> str:
     text = (
         "Po więcej informacji prosimy o kontakt:"
         if normalise_language(language) == "pl"
         else "For more information, please contact us:"
     )
     return f"""
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:18px 0 0 0;background:#F4F7F9;border:1px solid #D9E1E8;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:{0 if after_cta else 18}px 0 0 0;background:#F4F7F9;border:1px solid #D9E1E8;">
       <tr>
         <td style="padding:16px 18px;color:#10212B;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;">
           {text} <a href="mailto:{CONTACT_EMAIL}" style="color:#0A6B3D;text-decoration:underline;">{CONTACT_EMAIL}</a>
@@ -223,7 +225,8 @@ def render_email_html(
     products = products or []
     headline = headline or subject or ("Oferta BHM Chemicals" if language == "pl" else "BHM Chemicals offer")
     preheader = preheader_from_body(html_to_text(body_html) if body_html is not None else body)
-    header = (f'<a href="{COMPANY_URL}"><img src="cid:{banner_cid(banner_asset)}" width="600" alt="BHM Chemicals" style="display:block;width:100%;max-width:600px;height:auto;border:0"></a>' if banner_asset else render_brand_header_html())
+    header = (f'<a href="{COMPANY_URL}"><img src="cid:{banner_cid(banner_asset)}" width="720" alt="BHM Chemicals" style="display:block;width:100%;max-width:720px;height:auto;border:0"></a>' if banner_asset else render_brand_header_html())
+    cta = render_cta_html(cta_label, cta_url)
     return f"""<!doctype html>
 <html lang="{language}">
   <head>
@@ -238,8 +241,8 @@ def render_email_html(
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;background:#F4F7F9;">
       <tr>
         <td align="center" style="padding:28px 12px;">
-          <!--[if mso]><table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0"><tr><td><![endif]-->
-          <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;border-collapse:collapse;background:#FFFFFF;border:1px solid #D9E1E8;">
+          <!--[if mso]><table role="presentation" width="720" cellspacing="0" cellpadding="0" border="0"><tr><td><![endif]-->
+          <table role="presentation" width="720" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:720px;border-collapse:separate;border-spacing:0;border-radius:8px;overflow:hidden;background:#FFFFFF;border:1px solid #D9E1E8;">
             <tr>
               <td style="padding:0;">
                 {header}
@@ -256,8 +259,8 @@ def render_email_html(
               <td style="padding:8px 28px 28px;color:#182A33;font-family:Aptos,Segoe UI,Arial,Helvetica,sans-serif;font-size:16px;line-height:1.65;">
                 {email_body(body_html) if body_html is not None else render_body_html(body)}
                 {render_products_html(products, language)}
-                {render_cta_html(cta_label, cta_url)}
-                {render_contact_html(language)}
+                {cta}
+                {render_contact_html(language, after_cta=bool(cta))}
               </td>
             </tr>
             <tr>

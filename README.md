@@ -80,6 +80,8 @@ The database stores contacts, campaigns, send snapshots/statuses, and unsubscrib
 
 ## Main Workflows
 
+Email layout (`BHM-EMAIL-LAYOUT-2026-10-16`): newly rendered HTML uses a fluid **720 px** card/banner/MSO wrapper, a full-width navy CTA with **24 px** table-based spacing below it, and **8 px** outer corners (square fallback in clients ignoring radius). Existing saved HTML and sent snapshots are not regenerated. Desktop/mobile synthetic QA and limitations: [layout acceptance](docs/email-layout-qa-2026-10-16.md). Native Outlook rendering and operational activation remain unverified for this delta.
+
 - Import contacts from paste input or XLSX.
 - Normalize and deduplicate emails.
 - Manage contact statuses: `active`, `unsubscribed`, `bounced`, `invalid`.
