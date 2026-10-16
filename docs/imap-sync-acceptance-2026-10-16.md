@@ -4,7 +4,7 @@ Task: `BHM-IMAP-AUTORESUME-2026-10-16`.
 
 ## Result and operational boundary
 
-Source implementation and isolated acceptance are complete. Operational activation is pending explicit approval for the additive migration and startup recovery. No operational schema/status change, SMTP send, campaign start/resume, `.env` edit or deployment was performed. Port 8000 was stopped at entry; historical PID14944 notes are not current runtime evidence.
+Source implementation, isolated acceptance and subsequently approved operational activation are complete. Current localhost8000 runs IMAP ON / SMTP forced OFF; no SMTP send or campaign start/resume occurred. See [actual activation and database readback](imap-activation-2026-10-16.md). Port8000 was stopped at task entry; historical PID14944 notes are superseded by the activation report.
 
 Confirmed root: `C:\Users\info\AGENTS\BHM Mailer`; public repository `ProgresLab/BHM-mailer`, branch `main`, starting local and freshly read remote SHA `9fe9b11828df683a7d89f95a2a512f06c43dc404`. GitHub settings: no Actions workflows, webhooks or Pages configured. Source push is authorized; no deployment is requested. Prior local activation documentation is preserved in the worktree and excluded from this task's commit.
 
@@ -28,13 +28,13 @@ Confirmed root: `C:\Users\info\AGENTS\BHM Mailer`; public repository `ProgresLab
 - Actual TLS login reused the existing local SMTP password only after verifying the same mailbox username. No credential was printed/copied. Read-only source search:623 messages from the established provider notification sender; no matching info unsubscribe notifications in either of the two selectable mailbox folders. This is a bounded source search, not proof that every possible unsubscribe format is absent.
 - Full real INBOX read applied **only on copied SQLite**:2173 messages;263 review cases;0 newly recognized hard bounces;0 unsubscribe;0 new contact-status changes. Existing Gmail evidence did not reapply status changes. Copy scan completed2026-10-16 **21:15:45 Europe/Warsaw**. This is not an operational sync time. The mailbox was not modified.
 
-## Backup and approval needed
+## Backup and approved activation
 
 Fresh SQLite backup uses SQLite backup API; complete campaign assets copied and hashes verified (2 assets). Private backup manifests live in ignored `backups/imap-sync-*`. Operational database hash was unchanged across copy QA; integrity check `ok`, foreign-key errors0. Current preflight verifies no in-flight send/attempt, reserved account or queued/sending admin notification.
 
 Final source copied-database preflight adds **3 columns** (`smtp_cooldown_until`, `auto_resume_count`, `failure_kind`), **3 tables** (`mail_sync_state`, `mail_sync_messages`, `mail_evidence`) and supporting indexes. Existing values are preserved. Startup recovery predicts only three execution timestamps (campaigns17/18/28) and three appended restart events; interrupted real queues remain manually paused.
 
-Approval request covers: fresh backup if needed; this additive migration; those recovery writes; one localhost8000 launch with IMAP ON and SMTP forced OFF; automatic application of future unequivocal mailbox evidence. No real SMTP test/start/resume is authorized. While approval is pending, operational SQLite remains unchanged and no current application instance is claimed.
+The subsequently granted explicit approval covers: fresh backup if needed; this additive migration; those recovery writes; one localhost8000 launch with IMAP ON and SMTP forced OFF; automatic application of future unequivocal mailbox evidence. No real SMTP test/start/resume is authorized. This approved activation was completed once with independent readback; see the activation report for the current runtime and exact database delta.
 
 ## Unresolved source coverage
 
@@ -44,4 +44,4 @@ Unknown provider header layouts and messages over1 MiB require review. IMAP scop
 
 ## Handoff and cleanup
 
-Exactly one task row is maintained in `PROJECT_BRIEF.md → Change Log`, alongside register I01–I09. Private data, backups, mailbox headers, runtime logs and screenshots are excluded from the public source commit. Source publication and remote SHA readback are recorded by Git and the final report. Final browser acceptance repeated on current source; own QA parent/child and browser closed. TCP probes confirm 8000/8017/8018/8019 are free; no own QA process remains. Operational startup awaits approval. No deploy.
+Exactly one task row is maintained in `PROJECT_BRIEF.md → Change Log`, alongside register I01–I09. Private data, backups, mailbox headers, runtime logs and screenshots are excluded from the public source commit. Source publication and remote SHA readback are recorded by Git and the final report. Final browser acceptance repeated on current source; own QA parent/child and browser closed. At source-only closeout8000/8017/8018/8019 were free. Subsequent approved activation now leaves operator8000 running and QA8017/8018/8019 free; no own QA process remains. No deploy.

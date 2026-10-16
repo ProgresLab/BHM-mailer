@@ -217,11 +217,11 @@ Evidence and limitations: [modernization acceptance](docs/modernization-acceptan
 
 ## IMAP sync, SMTP cooldown and recipient sorting (2026-10-16)
 
-Current acceptance: source and isolated QA complete; operational activation awaits explicit approval for the additive schema and three recovery timestamps/events. Port 8000 was stopped at task entry. See [acceptance and activation boundary](docs/imap-sync-acceptance-2026-10-16.md).
+Current acceptance: source, isolated QA and approved operational activation complete; IMAP ON / SMTP forced OFF at localhost8000. Port8000 was stopped at task entry and was started once after backup/copy preflight. See [acceptance and activation boundary](docs/imap-sync-acceptance-2026-10-16.md).
 
 - The local application owns one SMTP worker and one independent OS-locked IMAP thread per database/mailbox. Both stop with the process. Closing a browser is safe; sleep/shutdown interrupts work and never authorizes real queue recovery.
 - Fixed IMAP connection: `imap.one.com:993`, certificate-verified TLS, read-only `EXAMINE` and `UID FETCH BODY.PEEK`, 20-second network timeout. No mailbox flag changes, moving, deletion or send. UID windows are at most 1000, each message at most 1 MiB; batches stop after 200 messages or 60 seconds (plus the current bounded call). Backlog continues in short batches; completed scans repeat after 900 seconds. Oversized reports require review.
-- Enable with process environment `IMAP_ENABLED=true`. `IMAP_USER` defaults to the campaign mailbox; `IMAP_FOLDER` defaults to `INBOX`. An optional local `IMAP_PASSWORD` overrides the password; otherwise `SMTP_PASSWORD` is reused only when the normalized usernames match. No `.env` change or secret publication is required. Default is OFF pending activation approval.
+- Enable with process environment `IMAP_ENABLED=true`. `IMAP_USER` defaults to the campaign mailbox; `IMAP_FOLDER` defaults to `INBOX`. An optional local `IMAP_PASSWORD` overrides the password; otherwise `SMTP_PASSWORD` is reused only when the normalized usernames match. No `.env` change or secret publication is required. Default remains OFF for ordinary launches; the approved safe launcher below forces IMAP ON / SMTP OFF.
 - Durable tables `mail_sync_state`, `mail_sync_messages` and `mail_evidence` store cursor, schedule, deduplication and audit. UIDVALIDITY changes replay the mailbox safely through the shared evidence key. Restart catches up by UID, without a message-date cutoff. Message bodies are not retained in these tables. An OS lock prevents a second app instance from running the same scan; manual requests are persisted and coalesced.
 - Classification reuses `app/reconciliation.py`. IMAP trusts only the inspected one.com storage/ingress receiver segment and its aligned DKIM verdict, plus exact historical accepted SMTP Message-ID, recipient and receipt time. Gmail's `mx.google.com` verdict is never substituted for IMAP proof. Changed/unknown routing fails closed to review. Previous Gmail evidence is deduplicated even when created before the new tables existed. `unsubscribed` always wins; accepted timestamps, snapshots and attempt ledgers remain intact.
 - The dashboard/monitor shows last/next successful scan, totals, errors and a guarded **Sprawdź teraz** button. Error categories omit arbitrary provider text and secrets. Review evidence is private SQLite; it is not a contact status and never deletes contacts.
@@ -232,3 +232,21 @@ Current acceptance: source and isolated QA complete; operational activation awai
 Reproduce isolated acceptance with `.venv/Scripts/python -m unittest discover -s tests -v`, `.venv/Scripts/python tools/sync_qa_server.py` and `node tools/sync_browser_qa.cjs` (bundled Playwright packages/installed Chromium). Only synthetic 8019 is targeted. Stop the QA server after checking; keep private screenshots in ignored `output/sync-qa/`.
 
 `tools/mail_sync_preflight.py` creates a consistent private SQLite/assets backup and runs init/recover only on a copy. `--scan` additionally reads the authorized mailbox into that copy; it never starts SMTP or initializes operational SQLite. Inspect its private manifest before operational activation, and take a fresh backup if live data has changed. Startup migration adds three execution columns, three IMAP tables and indexes. Current copy preflight also predicts three updated execution timestamps and three appended recovery events for interrupted queues 17/18/28. Those operational effects require explicit approval.
+
+
+### Approved operation with IMAP ON / SMTP OFF
+
+Operational activation completed after explicit user approval. Actual application: `http://127.0.0.1:8000`, PID18152, launched once at 2026-10-16 21:56:40 CEST. First completed IMAP sync: 2026-10-16 21:59:55 CEST; next scheduled scan: 2026-10-16 22:14:55 CEST. Initial2173 messages produced263 review cases and0 new contact-status changes. The three old queues17/18/28 remain manually paused; no SMTP/admin attempt was made. [Activation/readback evidence](docs/imap-activation-2026-10-16.md).
+
+After a future computer restart, double-click **`start-imap-safe.bat`** in this project, or run:
+
+```powershell
+Set-Location 'C:\Users\info\AGENTS\BHM Mailer'
+.\start-imap-safe.bat
+```
+
+Keep its server window open. This launcher uses the existing venv, binds only127.0.0.1:8000, forces `IMAP_ENABLED=true` and **`SMTP_ENABLED=false`**, and pins the canonical SQLite/assets paths. It reuses only the locally configured matching mailbox credential; `.env` is not edited. A second launch exits before loading the application or performing recovery if8000 is occupied. Dependencies must already be installed from `requirements.txt`; the launcher does not install anything or send email.
+
+The current activation was started hidden using the same Python helper `tools/run_imap_safe.py`; the user need not launch it again while8000 is responding. Ordinary `start.bat` retains its existing `.env` behavior and does not provide this SMTP-OFF guarantee. Never use it as a replacement for the safe launcher in this approved mode.
+
+There is no Windows startup task/service. After sleep/process interruption, restart recovery still requires review and explicit operator resume for real queues; opening the browser is not a send instruction. The app automatically catches up IMAP by persisted UID. Unsubscribe coverage remains incomplete; no info mailbox/forwarding/public endpoint was changed.

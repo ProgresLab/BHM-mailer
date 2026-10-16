@@ -48,6 +48,7 @@ Choose the smallest useful validation for the change:
 - IMAP uses a separate OS-locked thread, EXAMINE/PEEK only, durable UID/UIDVALIDITY and shared Gmail evidence deduplication. Unknown receiver headers, unmatched attempts and conflicting evidence require review. Keep IMAP off in unrelated QA; `tools/sync_qa_server.py` uses fake IMAP on 8019, SMTP OFF.
 - Safe definite 4xx cooldown is at least 900 seconds with at most three automatic resumes per queue; R6/reputation/authentication/uncertain outcomes require an operator. Manual pause and process recovery always win.
 - Operational migration/activation requires a separately authorized backup and copied-database preflight. A running older process is not proof of the new source behavior.
+- Approved operator mode uses `start-imap-safe.bat` / `tools/run_imap_safe.py`: canonical DB/assets, IMAP ON, SMTP forced OFF, port bind before startup to avoid duplicate recovery. Leave the operator instance running; never infer send/resume authorization from IMAP activation.
 - Material tasks maintain one `Requirements & Acceptance` register and exactly one dated task entry in `PROJECT_BRIEF.md → Change Log`.
 
 ## Project Brief Update Rule
