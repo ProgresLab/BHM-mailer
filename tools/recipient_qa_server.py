@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 QA = ROOT / 'output' / 'recipient-qa'
 QA.mkdir(parents=True, exist_ok=True)
 os.environ.update(BHM_DB_PATH=str(QA / 'synthetic.sqlite3'),
-                  BHM_ASSET_DIR=str(QA / 'assets'), SMTP_ENABLED='false',
+                  BHM_ASSET_DIR=str(QA / 'assets'), SMTP_ENABLED='false', IMAP_ENABLED='false',
                   ADMIN_NOTIFICATION_EMAIL='', UNSUBSCRIBE_SECRET='synthetic-qa-only')
 sys.path.insert(0, str(ROOT))
 from app import db

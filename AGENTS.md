@@ -49,6 +49,7 @@ Choose the smallest useful validation for the change:
 - Safe definite 4xx cooldown is at least 900 seconds with at most three automatic resumes per queue; R6/reputation/authentication/uncertain outcomes require an operator. Manual pause and process recovery always win.
 - Operational migration/activation requires a separately authorized backup and copied-database preflight. A running older process is not proof of the new source behavior.
 - Approved operator mode uses `start-imap-safe.bat` / `tools/run_imap_safe.py`: canonical DB/assets, IMAP ON, SMTP forced OFF, port bind before startup to avoid duplicate recovery. Leave the operator instance running; never infer send/resume authorization from IMAP activation.
+- Normal operational mode is explicitly `start-bhm-operational.bat` / `tools/run_bhm_operational.py` (IMAP ON + SMTP ON). Bind 8000 before imports; require complete one.com identity/HMAC, idle/unreserved account, no unsent/uncertain admin notification, no unresolved attempts/cooldown, intact assets and copied startup preflight. Existing interrupted-queue timestamp/audit writes require exact operator approval; `--approve-recovery-for` is an approval acknowledgement, never a testing bypass. No automatic campaign start/resume. Keep the IMAP-only launcher separate. Legacy `start.bat` is setup only and is not an operational launcher.
 - Material tasks maintain one `Requirements & Acceptance` register and exactly one dated task entry in `PROJECT_BRIEF.md → Change Log`.
 
 ## Project Brief Update Rule

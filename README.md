@@ -8,13 +8,19 @@ Git tracks application source, documentation, branding assets, and the non-secre
 
 ## Setup and Run
 
-Recommended on Windows:
+For normal operation on Windows (IMAP ON + SMTP ON, separate campaign confirmation):
 
 ```powershell
-.\start.bat
+.\start-bhm-operational.bat
 ```
 
-`start.bat` creates `.venv` if needed, installs dependencies, creates `.env` from `.env.example` if missing, starts the app on `127.0.0.1:8000`, waits for a response, and opens the browser.
+Use `start-imap-safe.bat` for IMAP ON / SMTP forced OFF. Both explicit launchers reuse existing dependencies and configuration, pin the canonical database/assets, and bind 8000 before loading the app. Keep the server running; closing the browser is safe, sleep/shutdown interrupts work. Neither launcher starts or resumes a campaign.
+
+**Legacy `start.bat` is a setup helper, not the operator launcher.** It installs dependencies and uses `.env` SMTP behavior; its original Uvicorn command can import the application before detecting a busy port. Do not run it alongside an existing instance or use it to switch operational modes. It is retained for compatibility. The explicit launchers above do not edit `.env` or install packages.
+
+Before operational activation take a fresh consistent SQLite/assets backup with `tools/mail_sync_preflight.py` and inspect the copied startup delta. The operational launcher refuses incomplete identity/signature/IMAP configuration, busy or uncertain work, account reservation/cooldown, missing assets and any unsent admin notification (including legacy pending records). Notifications are preserved for an operator decision, not sent as part of activation. It also refuses unexpected migration/recovery. For already interrupted, manually paused queues, existing recovery changes only `updated` and appends one audit event each; an interactive exact `RECOVERY 17,18,28` acknowledgement is required for the current three queues. Headless use requires separately granted approval, passed as `--approve-recovery-for 17 18 28`. This never approves campaign delivery. If the predicted scope differs, stop and review it again.
+
+The operational process forces SSL transport (`SMTP_USE_SSL=true`, `SMTP_USE_TLS=false`) and validates the existing one.com host465/account/From/Reply-To/envelope sender and HTTPS signed unsubscribe configuration. Credentials and `.env` remain untouched. TLS/AUTH/NOOP alone does not prove delivery or absence of a recipient-stage provider restriction. [Preparation and current activation status](docs/operational-preparation-2026-10-16.md).
 
 Manual run:
 
@@ -22,7 +28,7 @@ Manual run:
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 Copy-Item .env.example .env
-.\.venv\Scripts\python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+.\start-imap-safe.bat
 ```
 
 Open: <http://127.0.0.1:8000>

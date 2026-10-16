@@ -48,7 +48,7 @@ fs.mkdirSync(out,{recursive:true}); fs.mkdirSync(shots,{recursive:true});
     assert.equal((await context.request.post(base+'/selection',{form:{action:'clear',confirm_clear:'1'}})).status(),200);
     await open('?search=marcin');
     // A legacy cached bundle has no listeners for the modern data-recipient DOM.
-    const legacy=execFileSync('git',['show','HEAD:app/static/app.js'],{encoding:'utf8'});
+    const legacy=execFileSync('git',['show','37ce3a788ba1cd01476a016c8113db52bccd45e9:app/static/app.js'],{encoding:'utf8'});
     const stale=await context.newPage();
     await stale.route('**/static/app.js*',r=>r.fulfill({contentType:'text/javascript',body:legacy}));
     await stale.goto(base+'/recipients?search=marcin');
