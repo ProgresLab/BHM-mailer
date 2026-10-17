@@ -17,7 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import worker, imap_sync
 from .assets import MAX_UPLOAD, store_banner, asset_path, banner_cid
 from .rich_text import sanitize_html, html_to_text, legacy_to_html, safe_url
-from .selection import PAGE_SIZE, selected_ids, selection_fingerprint, update_selection
+from .selection import PAGE_SIZE, selected_ids, selection_fingerprint, update_selection, UNCERTAIN_CONTACT_SQL
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -1062,7 +1062,10 @@ def campaign_recipients(request: Request, campaign_id: int, country_group: str='
             (SELECT s.campaign_id FROM email_sends s WHERE s.contact_id=c.id
              AND s.status<>'dry_run' AND (s.accepted_at IS NOT NULL OR (s.status='sent' AND s.sent_at IS NOT NULL))
              AND NOT EXISTS(SELECT 1 FROM send_attempt_history a WHERE a.send_id=s.id AND a.mode='dry_run')
-             ORDER BY julianday(COALESCE(s.accepted_at,s.sent_at)) DESC,s.id DESC LIMIT 1) AS last_smtp_campaign
+             ORDER BY julianday(COALESCE(s.accepted_at,s.sent_at)) DESC,s.id DESC LIMIT 1) AS last_smtp_campaign,
+            (SELECT GROUP_CONCAT(q.campaign_id) FROM email_sends q JOIN campaigns qc ON qc.id=q.campaign_id
+             WHERE q.contact_id=c.id AND qc.status IN ('sending','stopped') AND q.status IN ('pending','rate_limited','sending')) AS unfinished_campaigns,
+            '''+UNCERTAIN_CONTACT_SQL+''' AS has_uncertain
             FROM contacts c'''+sql+f' ORDER BY {ordering[sort]} {direction.upper()},c.id ASC LIMIT ? OFFSET ?',(*params,PAGE_SIZE,(page-1)*PAGE_SIZE)).fetchall()
         selected = selected_ids(conn,campaign_id)
         eligible_count = len(selected_ids(conn,campaign_id,eligible=True))
@@ -1128,11 +1131,11 @@ async def campaign_selection_remove(request: Request, campaign_id: int):
 def campaign_summary(request: Request, campaign_id: int):
     with get_connection() as conn:
         campaign = conn.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
-        recipients = conn.execute('''SELECT c.* FROM contacts c JOIN campaign_selection s ON s.contact_id=c.id
+        recipients = conn.execute('''SELECT c.*, '''+UNCERTAIN_CONTACT_SQL+''' AS has_uncertain FROM contacts c JOIN campaign_selection s ON s.contact_id=c.id
             WHERE s.campaign_id=? ORDER BY c.id''', (campaign_id,)).fetchall()
     if not campaign or campaign['status'] != 'approved':
         return redirect_to(f'/campaigns/{campaign_id}/recipients', message='Selekcja wymaga zatwierdzonej kampanii.')
-    ids = [r['id'] for r in recipients if r['status'] == 'active']
+    ids = [r['id'] for r in recipients if r['status'] == 'active' and not r['has_uncertain']]
     seconds = max(0,len(ids)-1)*20
     seconds += (max(0,seconds-1)//worker.ACTIVE_PERIOD)*worker.BREAK_SECONDS
     return render_template(request,'campaign_confirm.html',dict(campaign=campaign,count=len(ids),

@@ -136,7 +136,7 @@ def addresses(value):
 
 def classify(action, status, diagnostic):
     detail = ' '.join(diagnostic.lower().split())
-    if status.startswith(('4.7','5.7')) or re.search(r'\[r6\]|spam|blacklist|blocklist|sender.*blocked|reputation|relay access denied|policy reasons', detail):
+    if status.startswith(('4.7','5.7')) or re.search(r'\[r6\]|spam|blacklist|blocklist|sender.*blocked|reputation|relay access denied|policy reasons|\btls\b|certificate|encrypt', detail):
         return 'sender_policy', None
     if action == 'delayed' or status.startswith('4'):
         return 'delayed', None
@@ -156,8 +156,8 @@ def classify(action, status, diagnostic):
         return 'invalid_domain', 'invalid'
     if re.search(r'5\.1\.(?:1|10)\b', status + ' ' + detail) or re.search(
             r'no such user|user unknown|unknown user|mailbox (?:does not exist|not found)|'
-            r'recipientnotfound|recipient (?:not found|does not exist)|no mailbox here|'
-            r'address not found|invalid mailbox|not listed in .*directory', detail):
+            r'recipientnotfound|recipient (?:not found|does not exist)|no mailbox\b|'
+            r'address not found|invalid mailbox|invalid recipient|not listed in .*directory', detail):
         return 'invalid_mailbox', 'invalid'
     if status in {'5.2.1', '5.1.6'}:
         return 'hard_bounce', 'bounced'
@@ -199,9 +199,37 @@ def ensure_idle(conn, campaign_id):
     return campaign
 
 
-def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-chemicals.com'):
+def ensure_paused_history(conn, campaign_id):
+    """Separate offline-only contract. Never clears a reservation or queue row.
+
+    Caller must also hold the stopped-runtime OS/port fence. Unlike ensure_idle,
+    this permits a reservation belonging to a durably paused historical queue.
+    """
+    campaign = conn.execute('SELECT * FROM campaigns WHERE id=?', (campaign_id,)).fetchone()
+    execution = conn.execute('SELECT * FROM campaign_execution WHERE campaign_id=?', (campaign_id,)).fetchone()
+    if not campaign or not execution:
+        raise ValueError('Missing campaign/execution')
+    if campaign['status'] in {'completed','completed_with_errors'}:
+        # Other paused queues may own the account while completed history is read.
+        if execution['state'] not in {'completed','completed_with_errors'}:
+            raise ValueError('Conflicting completed execution')
+    elif campaign['status'] not in {'sending','stopped'} or execution['state'] not in {'manual_paused','interrupted','problem'}:
+        raise ValueError('History reconciliation requires a paused campaign')
+    if conn.execute("SELECT 1 FROM email_sends WHERE status='sending' LIMIT 1").fetchone() or conn.execute(
+            "SELECT 1 FROM send_attempt_history WHERE status='sending' OR finished IS NULL LIMIT 1").fetchone():
+        raise ValueError('An attempt remains in flight or interrupted; review first')
+    if conn.execute("SELECT 1 FROM unsubscribe_events WHERE notification_status IN ('sending','queued') LIMIT 1").fetchone():
+        raise ValueError('Admin SMTP work remains queued')
+    if conn.execute("SELECT 1 FROM campaign_execution WHERE state NOT IN ('manual_paused','interrupted','problem','completed','completed_with_errors') LIMIT 1").fetchone():
+        raise ValueError('A queue is not durably stopped')
+    if conn.execute('SELECT 1 FROM mail_sync_state WHERE scanning=1 LIMIT 1').fetchone():
+        raise ValueError('IMAP scan remains active')
+    return campaign
+
+
+def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-chemicals.com', paused_history=False):
     if source == 'gmail':
-        ensure_idle(conn, campaign_id)
+        (ensure_paused_history if paused_history else ensure_idle)(conn, campaign_id)
     sends = [dict(r) for r in conn.execute('''SELECT s.*,c.status contact_status,c.unsubscribe_token
         FROM email_sends s JOIN contacts c ON c.id=s.contact_id WHERE campaign_id=?''', (campaign_id,))]
     by_email = {s['email'].lower(): s for s in sends}
@@ -222,6 +250,8 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
         root = message.get('payload') or {}
         trusted = authenticated(root) if source == 'gmail' else imap_authenticated(root, mailbox)
         base = dict(gmail_id=message['id'], date=message.get('internal_date'),
+                    received_at=int(message.get('internal_date') or 0)/1000,
+                    report_date=header(root, 'Date'),
                     report_id=header(root, 'Message-ID'), source=header(root, 'From'))
         report_time = int(message.get('internal_date') or 0) / 1000
         refs = set()
@@ -265,6 +295,8 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
                 s, started = next(iter(unique.values())) if len(unique) == 1 else (None, None)
                 routed = 'marketing@bhm-chemicals.com' in ' '.join(header(root, k).lower() for k in ('To', 'X-Forwarded-for', 'X-HalOne-Forwarded-For'))
                 verified = s is not None and trusted and routed and report_time >= started
+                if s and (not s['accepted_at'] or s['status'] not in {'accepted_by_smtp','sent','bounced_later'}):
+                    verified = False
                 events.append(dict(base, recipient=next(iter(sorted(recipient_set)), ''),
                     send_id=s['id'] if s else None,
                     kind=kind if verified else 'review_unverified_dsn', target=target if verified else None,
@@ -272,6 +304,7 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
                     original_recipient=str(record.get('Original-Recipient', '')),
                     final_recipient=str(record.get('Final-Recipient', '')),
                     original_message_ids=sorted(refs), diagnostic=diagnostic,
+                    smtp_attempt_started=started,
                     reason=diagnostic if verified else 'Missing authenticated source, exact accepted Message-ID/recipient, routing or time'))
         else:
             report_like = root.get('mime_type') == 'multipart/report' or re.search(
@@ -314,7 +347,7 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
             bounce_sends[s['id']] = dict(send_id=s['id'], old_status=s['status'],
                 old_trace=[s[k] for k in ('trace_status','trace_detail','trace_source','final_status_at','last_checked_at')],
                 new_status='bounced_later', evidence_key=e['key'], gmail_id=e['gmail_id'], diagnostic=e['reason'])
-    return dict(campaign_id=campaign_id, source=source, message_count=len(messages), events=events,
+    return dict(campaign_id=campaign_id, source=source, paused_history=paused_history, message_count=len(messages), events=events,
                 contacts=list(changes.values()), sends=list(bounce_sends.values()),
                 counts=dict(Counter(e['kind'] for e in events if not e['duplicate'])))
 
@@ -323,7 +356,7 @@ def apply(conn, proposal, now=None):
     """Caller owns transaction; abort on any optimistic conflict. Never migrate."""
     cid = proposal['campaign_id']
     if proposal.get('source','gmail') == 'gmail':
-        ensure_idle(conn, cid)
+        (ensure_paused_history if proposal.get('paused_history') else ensure_idle)(conn, cid)
     for event in proposal['events']:
         if event['persist'] and not event['duplicate'] and conn.execute('SELECT 1 FROM execution_events WHERE campaign_id=? AND message LIKE ? LIMIT 1',
                 (cid, PREFIX + '%"key": "' + event['key'] + '"%')).fetchone():
@@ -348,7 +381,7 @@ def apply(conn, proposal, now=None):
     for event in proposal['events']:
         if event['duplicate'] or not event['persist']:
             continue
-        audit = dict(event, source_transport=proposal.get('source','gmail'), contact_changes=[c for c in proposal['contacts'] if c['evidence_key']==event['key']],
+        audit = dict(event, processed_at=now, source_transport=proposal.get('source','gmail'), contact_changes=[c for c in proposal['contacts'] if c['evidence_key']==event['key']],
                      send_changes=[s for s in proposal['sends'] if s['evidence_key']==event['key']])
         conn.execute('INSERT INTO execution_events(campaign_id,created,message) VALUES(?,?,?)',
                      (cid, datetime.fromisoformat(now).timestamp(), PREFIX + json.dumps(audit, sort_keys=True)))

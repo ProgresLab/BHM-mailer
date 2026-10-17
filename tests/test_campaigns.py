@@ -456,7 +456,9 @@ class Case(unittest.TestCase):
         worker.recover(self.clock())
         send=self.row('SELECT * FROM email_sends ORDER BY id')
         self.assertEqual(send['status'],'delivery_unknown')
-        with self.assertRaises(ValueError):worker.resume(cid,self.clock())
+        worker.resume(cid,self.clock())
+        self.engine.tick()
+        self.assertEqual(self.row('SELECT status FROM email_sends ORDER BY id')['status'],'delivery_unknown')
         with self.assertRaises(ValueError):worker.resolve_uncertain(send['id'],'retry_not_accepted','Confirmed trace evidence',False,self.clock())
         worker.resolve_uncertain(send['id'],'cancel','Operator chooses no retry',now=self.clock())
         worker.resume(cid,self.clock());self.engine.tick()
@@ -469,7 +471,8 @@ class Case(unittest.TestCase):
         self.assertEqual(self.row('SELECT status FROM email_sends ORDER BY id')['status'],'delivery_unknown')
         self.assertEqual(self.row('SELECT outcome_uncertain FROM email_sends ORDER BY id')['outcome_uncertain'],1)
         self.clock.advance(1000);self.engine.tick()
-        with self.assertRaises(ValueError):worker.resume(cid,self.clock())
+        worker.resume(cid,self.clock())
+        self.assertEqual(self.row('SELECT status FROM email_sends ORDER BY id')['status'],'delivery_unknown')
 
     def test_rate_limit_4xx_pauses_with_cooldown(self):
         cid,ids=self.prepare()
@@ -490,7 +493,7 @@ class Case(unittest.TestCase):
         def fail(*a,**kw):raise smtplib.SMTPRecipientsRefused({a[1]:(550,b'no mailbox')})
         self.engine.sender=fail;self.engine.tick()
         self.assertEqual(self.row('SELECT status FROM email_sends ORDER BY id')['status'],'smtp_failed')
-        self.assertEqual(self.row('SELECT status FROM contacts ORDER BY id')['status'],'bounced')
+        self.assertEqual(self.row('SELECT status FROM contacts ORDER BY id')['status'],'invalid')
         self.engine.sender=self.fake_send;self.clock.advance(20);self.engine.tick()
         self.assertEqual(len(self.starts),1)
 

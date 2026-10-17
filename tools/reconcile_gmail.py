@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from app import reconciliation as rec
+from tools.stopped_runtime import stopped_runtime
 
 
 def digest(path):
@@ -89,7 +90,9 @@ def load_messages(paths):
         if isinstance(data, list):
             raw.update({m['id']:m for m in data})
         else:
-            for m in data['messages']:
+            if not isinstance(data,dict) or not any(k in data for k in ('messages','responses')):
+                raise ValueError('Expected complete connector message export')
+            for m in data.get('messages', data.get('responses', [])):
                 if not m.get('payload'):
                     raise ValueError('Incomplete MIME: ' + m['id'])
                 messages[m['id']] = m
@@ -116,13 +119,21 @@ def main():
     p.add_argument('--campaign', type=int, required=True)
     p.add_argument('--input', type=Path, nargs='+', required=True)
     p.add_argument('--manifest', type=Path, required=True)
+    p.add_argument('--paused-history', action='store_true', help='Offline stopped-runtime fence; reconcile accepted history only, preserving pending.')
     a=p.parse_args()
+    # Hold both fences throughout backup, simulation, apply and readback. This
+    # tool never imports app.main, initializes schema or starts a worker.
+    with stopped_runtime(a.database):
+        run(a)
+
+
+def run(a):
     messages, inputs=load_messages(a.input)
     if a.mode == 'prepare':
         if a.manifest.exists():
             raise ValueError('Manifest already exists; never overwrite evidence')
         with connect(a.database, True) as source:
-            rec.ensure_idle(source,a.campaign)
+            (rec.ensure_paused_history if a.paused_history else rec.ensure_idle)(source,a.campaign)
             backup_dir=ROOT/'backups'/('reconciliation-'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
             backup_dir.mkdir(parents=True,exist_ok=False)
             backup=backup_dir/'bhm_mailer.sqlite3'
@@ -134,7 +145,7 @@ def main():
                 original_schema=schema(saved)
                 if snapshot(source) != before:
                     raise ValueError('Source changed during backup')
-                proposal=rec.plan(saved,a.campaign,messages)
+                proposal=rec.plan(saved,a.campaign,messages,paused_history=a.paused_history)
         assets=ROOT/'uploads'/'campaign_assets'
         manifest_assets={}
         if assets.exists():
@@ -159,7 +170,7 @@ def main():
         with connect(simulation, True) as readback:
             checks(readback)
             validate_delta(before,snapshot(readback),proposal)
-            replay=rec.plan(readback,a.campaign,messages)
+            replay=rec.plan(readback,a.campaign,messages,paused_history=a.paused_history)
             if replay['contacts'] or replay['sends'] or any(e['persist'] and not e['duplicate'] for e in replay['events']):
                 raise ValueError('Replay is not idempotent')
         a.manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -185,7 +196,7 @@ def main():
             live.execute('BEGIN IMMEDIATE')
             if snapshot(live) != before or schema(live) != original_schema:
                 raise ValueError('Operational data changed after backup; replan')
-            current=rec.plan(live,a.campaign,messages)
+            current=rec.plan(live,a.campaign,messages,paused_history=a.paused_history)
             if current != manifest['proposal']:
                 raise ValueError('Plan changed')
             rec.apply(live,current,manifest['timestamp'])

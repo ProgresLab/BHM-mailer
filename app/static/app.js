@@ -423,7 +423,7 @@ function initMonitor() {
       const d = await response.json();
       if (!d.execution_state) {set('state_label','Brak aktywnej kolejki');return;}
       const done = ['completed','completed_with_errors'].includes(d.execution_state);
-      set('state_label',labels[d.execution_state] || d.execution_state);
+      set('state_label',d.provider_wait?'Oczekiwanie na ograniczenia providera':labels[d.execution_state] || d.execution_state);
       set('mode', d.mode === 'dry_run' ? 'DRY-RUN / BEZ WYSYŁKI SMTP' : 'SMTP / WYSYŁKA KONTROLOWANA');
       Object.entries(d.counts).forEach(([key,value])=>set(key,value));
       set('current_email',d.current_email || 'Brak próby w toku'); set('next_email',d.next_email || 'Brak');
@@ -433,7 +433,9 @@ function initMonitor() {
       set('interval','20 s / jedna próba'); set('next_attempt',done?'—':duration(d.next_attempt_seconds));
       set('next_break',done?'—':d.cooldown_seconds?`Trwa przerwa: ${duration(d.cooldown_seconds)}`:duration(d.next_break_seconds));
       set('progress',d.percent+'%'); root.querySelector('[data-monitor-progress]').style.width=d.percent+'%';
-      set('notice',d.manual_pause ? (d.current_email?'Pauza zlecona — trwa kończenie rozpoczętej próby.':'Kampania oczekuje na ręczne wznowienie.') : d.execution_state==='auto_cooldown'?`${d.problem} Wznowienie ${new Date(d.resume_at).toLocaleTimeString('pl-PL',{timeZone:'Europe/Warsaw'})}, za ${duration(d.smtp_cooldown_seconds)}. ${d.failure_detail}`:d.execution_state==='auto_break'?`Automatyczna przerwa — wznowienie za ${duration(d.cooldown_seconds)}.`:d.problem || (done?'Kolejka zakończona. Sprawdź historię statusów.':'Kolejka pracuje w tle.'));
+      set('notice',d.manual_pause ? (d.current_email?'Pauza zlecona — trwa kończenie rozpoczętej próby.':'Kampania oczekuje na ręczne wznowienie.') : d.execution_state==='auto_cooldown'?`${d.problem} Najwcześniejsza bezpieczna próba ${new Date(d.resume_at).toLocaleTimeString('pl-PL',{timeZone:'Europe/Warsaw'})}, za ${duration(d.smtp_cooldown_seconds)}. ${d.failure_detail}`:d.execution_state==='auto_break'?`Automatyczna przerwa 5 minut — wznowienie za ${duration(d.cooldown_seconds)}.`:d.problem || (done?'Kolejka rozliczona. Błędy i niepewne próby sprawdź w historii.':'Kolejka pracuje w tle.'));
+      set('quality_warning',d.quality_warning || '');
+      root.querySelector('[data-monitor="quality_warning"]').hidden=!d.quality_warning;
       root.querySelector('[data-control="pause"]').disabled=done || d.manual_pause;
       root.querySelector('[data-control="resume"]').disabled=done || (!d.manual_pause&&!['problem','interrupted'].includes(d.execution_state));
       root.querySelector('[data-monitor-events]').innerHTML=d.recent_events.map(e=>`<li><time>${escapeHtml(new Date(e.created*1000).toLocaleTimeString('pl-PL'))}</time> ${escapeHtml(e.message)}</li>`).join('');

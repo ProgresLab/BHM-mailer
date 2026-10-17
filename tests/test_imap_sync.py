@@ -269,12 +269,11 @@ class CooldownCase(unittest.TestCase):
         self.assertEqual(self.row('SELECT auto_resume_count FROM campaign_execution')['auto_resume_count'],3)
         self.engine.sender=self.fake_send;self.engine.tick();self.assertFalse(self.starts)
 
-    def test_r6_auth_policy_5xx_unknown_never_auto_resume(self):
+    def test_auth_policy_5xx_never_auto_resume(self):
         cid,ids=self.prepare(1)
-        failures=[smtplib.SMTPDataError(451,b'4.7.1 [R6] more than 50 failed deliveries'),
-                  smtplib.SMTPAuthenticationError(454,b'temporary authentication failure'),
+        failures=[smtplib.SMTPAuthenticationError(454,b'temporary authentication failure'),
                   smtplib.SMTPDataError(451,b'temporary reputation issue'),
-                  smtplib.SMTPDataError(550,b'5.7.1 rejected'),TimeoutError('connection timeout')]
+                  smtplib.SMTPDataError(550,b'5.7.1 rejected')]
         for failure in failures:
             with db.get_connection() as c:
                 c.execute("UPDATE campaign_execution SET state='running',updated=?,manual_pause=0,smtp_cooldown_until=0",(self.clock(),))
@@ -339,7 +338,7 @@ class CooldownCase(unittest.TestCase):
         self.engine.sender=self.fake_send;self.engine.tick();self.assertFalse(self.starts)
         self.assertGreater(worker.execution_payload(cid,self.clock())['next_attempt_seconds'],0)
 
-    def test_many_distinct_failures_block_before_next_smtp_attempt(self):
+    def test_many_distinct_failures_warn_without_resume_loop(self):
         cid,ids=self.prepare(51)
         with db.get_connection() as c:
             sends=c.execute('SELECT id FROM email_sends ORDER BY id LIMIT 50').fetchall()
@@ -348,15 +347,19 @@ class CooldownCase(unittest.TestCase):
                 c.execute('''INSERT INTO send_attempt_history(send_id,attempt_number,mode,started,finished,status,message_id)
                     VALUES(?,1,'smtp',?,?,'smtp_failed','<failure@example.test>')''',(sid,self.clock()-10,self.clock()-9))
         self.engine.tick()
-        self.assertFalse(self.starts)
+        self.assertEqual(len(self.starts),1)
         row=self.row('SELECT state,problem FROM campaign_execution')
-        self.assertEqual(row['state'],'problem');self.assertIn('50',row['problem'])
+        self.assertEqual(row['state'],'running')
+        self.assertIn('50',worker.execution_payload(cid,self.clock())['quality_warning'])
+        worker.pause(cid,self.clock());worker.resume(cid,self.clock());self.engine.tick()
+        self.assertEqual(self.row("SELECT COUNT(*) n FROM execution_events WHERE message LIKE 'Jakość listy:%'")['n'],1)
 
     def test_verified_later_bounces_count_toward_failure_signal(self):
         cid,ids=self.prepare(2)
         with db.get_connection() as c:
             sid=c.execute('SELECT id FROM email_sends ORDER BY id LIMIT 1').fetchone()[0]
             c.execute("UPDATE email_sends SET status='bounced_later',final_status_at=? WHERE id=?",(worker.stamp(self.clock()),sid))
+            c.execute('INSERT INTO execution_events(campaign_id,created,message) VALUES(?,?,?)',(cid,self.clock(),rec.PREFIX+json.dumps(dict(bounce=True,send_id=sid,date=str(int(self.clock()*1000))))))
             self.assertEqual(worker.recent_delivery_failures(c,self.clock()),1)
             self.assertEqual(worker.recent_delivery_failures(c,self.clock()+3601),0)
 

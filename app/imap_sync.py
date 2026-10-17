@@ -18,6 +18,7 @@ from . import db, mailer, reconciliation as rec
 
 INTERVAL = 900
 MAX_BYTES = 1024 * 1024
+MAX_REPORT_BYTES = 8 * MAX_BYTES
 MAX_MESSAGES = 200
 TIMEOUT = 20
 
@@ -137,6 +138,60 @@ def process_message(conn, raw, received, config, now):
     return counts
 
 
+def fetch_report(client, uid):
+    """Bounded PEEK; expand a large report once, never parse a partial MIME."""
+    def fetch(limit):
+        typ,data=client.uid('FETCH',str(uid),'(INTERNALDATE RFC822.SIZE BODY.PEEK[]<0.'+str(limit+1)+'>)')
+        if typ!='OK':raise ValueError('IMAP UID FETCH failed')
+        parts=[p for p in data if isinstance(p,tuple)]
+        return parts[0] if parts else (None,None)
+    meta,raw=fetch(MAX_BYTES)
+    if meta is None:return None,None,False
+    size_match=re.search(rb'RFC822.SIZE (\d+)',meta)
+    received=imaplib.Internaldate2tuple(meta)
+    if received is None or not size_match:
+        raise ValueError('Missing IMAP receipt/size')
+    size=int(size_match[1])
+    if size>MAX_BYTES:
+        from email.parser import BytesHeaderParser
+        headers=BytesHeaderParser().parsebytes(raw.split(b'\r\n\r\n',1)[0])
+        report_like=headers.get_content_type()=='multipart/report' or bool(re.search(
+            r'undeliver|delivery (?:status|fail)|returned mail',str(headers.get('Subject','')),re.I))
+        if size>MAX_REPORT_BYTES or not report_like:
+            return None,time.mktime(received),True
+        meta,raw=fetch(MAX_REPORT_BYTES)
+        if meta is None:raise ValueError('Report vanished during expanded PEEK')
+    if len(raw)!=size:
+        raise ValueError('Incomplete IMAP MIME; cursor not advanced')
+    return raw,time.mktime(received),False
+
+
+def reanalyse_review(conn, config, uidvalidity, uid, raw, received, now):
+    """Explicit re-analysis of a prior review with full, bounded MIME.
+
+    Caller holds the mailbox OS lock and transaction (or an isolated copy).
+    This never resets cursors; unchanged evidence remains idempotent. Review
+    totals describe historical decisions and are not decremented retroactively.
+    """
+    state=conn.execute('SELECT uidvalidity FROM mail_sync_state WHERE mailbox=?',(config.key,)).fetchone()
+    saved=conn.execute('SELECT disposition FROM mail_sync_messages WHERE mailbox=? AND uidvalidity=? AND uid=?',(config.key,uidvalidity,uid)).fetchone()
+    if not state or state[0]!=uidvalidity or not saved:
+        raise ValueError('Unknown historical UID / UIDVALIDITY changed')
+    if len(raw)>MAX_REPORT_BYTES:
+        raise ValueError('Report exceeds bounded re-analysis size')
+    disposition=saved[0]
+    parsed={} if disposition.startswith('review_required') else json.loads(disposition)
+    if 'review_required' not in disposition and not (parsed.get('reviews',0) or parsed.get('previous_review')):
+        raise ValueError('Only previously unresolved reports can be re-analysed')
+    counts=process_message(conn,raw,received,config,now)
+    conn.execute('UPDATE mail_sync_messages SET disposition=? WHERE mailbox=? AND uidvalidity=? AND uid=?',
+        (json.dumps(dict(counts,reanalysed_at=now,previous_review=True)),config.key,uidvalidity,uid))
+    conn.execute('''UPDATE mail_sync_state SET hard_bounces=hard_bounces+?,unsubscribes=unsubscribes+?,
+        alerts=alerts+?,contact_changes=contact_changes+? WHERE mailbox=?''',
+        (counts['hard_bounces'],counts['unsubscribes'],counts['alerts'],counts['contact_changes'],config.key))
+    return counts
+
+
 class Engine:
     def __init__(self, clock=time.time, factory=connection, config=None, stop=None):
         self.clock,self.factory,self.config = clock,factory,config or settings()
@@ -183,24 +238,15 @@ class Engine:
                                             (self.config.key,validity,uid)).fetchone()
                     counts = dict(hard_bounces=0,unsubscribes=0,reviews=0,alerts=0,contact_changes=0)
                     if not done:
-                        typ,data = client.uid('FETCH',str(uid),'(INTERNALDATE RFC822.SIZE BODY.PEEK[]<0.'+str(MAX_BYTES+1)+'>)')
-                        if typ != 'OK':
-                            raise ValueError('IMAP UID FETCH failed')
-                        parts = [p for p in data if isinstance(p,tuple)]
-                        if not parts: # expunged between search and fetch
+                        raw,received,oversized=fetch_report(client,uid)
+                        if raw is None and not oversized: # expunged between search and fetch
                             cursor=uid
                             continue
-                        meta,raw = parts[0]
-                        received = imaplib.Internaldate2tuple(meta)
-                        if received is None:
-                            raise ValueError('Missing IMAP INTERNALDATE')
-                        received = time.mktime(received)
-                        oversized = len(raw)>MAX_BYTES or int(re.search(rb'RFC822.SIZE (\d+)',meta)[1])>MAX_BYTES
                         with db.get_connection() as conn:
                             conn.execute('BEGIN IMMEDIATE')
                             if oversized:
                                 counts['reviews']=1
-                                disposition='review_required: message exceeds 1 MiB'
+                                disposition='review_required: oversized non-report or report exceeds 8 MiB'
                             else:
                                 counts=process_message(conn,raw,received,self.config,self.clock())
                                 disposition=json.dumps(counts)

@@ -39,8 +39,27 @@ def seed():
     with db.get_connection() as c:c.execute("UPDATE campaigns SET status='approved' WHERE id=33")
 
 
+def seed_iteration():
+    """Separate synthetic states; no reservation means no automatic attempt."""
+    with db.get_connection() as c:
+        now=time.time()
+        c.execute('UPDATE campaign_execution SET started=?,updated=?,smtp_cooldown_until=? WHERE campaign_id=33',(now,now,now+900))
+        for cid,state in ((35,'auto_cooldown'),(36,'completed_with_errors')):
+            c.execute('''INSERT OR IGNORE INTO campaigns(id,name,subject,language,body,html,text,status,created_at)
+                VALUES(?,?,'QA','pl','QA','<p>QA</p>','QA','approved',?)''',(cid,'QA R6' if cid==35 else 'QA niepewna próba',db.utc_now()))
+            c.execute('''INSERT OR REPLACE INTO campaign_execution(campaign_id,state,mode,started,updated,smtp_cooldown_until,problem,failure_kind)
+                VALUES(?,?,'smtp',?,?,?,?,?)''',(cid,state,now,now,now+3600 if cid==35 else 0,
+                'Provider R6: jedna ograniczona próba po cooldownie; bez gwarancji odblokowania.' if cid==35 else '',
+                '451 4.7.1 [R6] too many failed deliveries' if cid==35 else ''))
+        if not c.execute('SELECT 1 FROM email_sends WHERE campaign_id=36').fetchone():
+            c.execute('''INSERT INTO email_sends(campaign_id,contact_id,email,language,subject,html_snapshot,text_snapshot,status,created_at,outcome_uncertain)
+                SELECT 36,id,email,'pl','QA','<p>QA</p>','QA','delivery_unknown',?,1 FROM contacts WHERE id=3''',(db.utc_now(),))
+        c.execute("UPDATE campaigns SET status='completed_with_errors' WHERE id=36")
+
+
 if __name__=='__main__':
     seed()
+    seed_iteration()
     imap_sync.manager=imap_sync.Manager(factory=lambda config:FakeIMAP({1:b'Subject: QA\r\n\r\nSynthetic only'}))
     (QA/'server.pid').write_text(str(os.getpid()))
     import uvicorn

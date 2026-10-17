@@ -46,6 +46,15 @@ class OperationalCase(unittest.TestCase):
     def test_no_recovery_for_clean_database(self):
         self.assertEqual(launcher.startup_preflight(db, worker, self.clock()), [])
 
+    def test_reserved_manual_pause_needs_exact_recovery_without_resuming(self):
+        cid,_=self.prepare(2)
+        worker.pause(cid,self.clock())
+        before=self.snapshot()
+        self.assertEqual(launcher.startup_preflight(db,worker,self.clock()+1),[cid])
+        self.assertEqual(self.snapshot(),before)
+        self.assertEqual(self.row('SELECT campaign_id FROM smtp_control')['campaign_id'],cid)
+        self.assertEqual(self.row('SELECT state FROM campaign_execution')['state'],'manual_paused')
+
     def test_notifications_preserved_and_block_activation(self):
         ids = self.contacts(1)
         for status in ('pending','queued','sending','uncertain'):

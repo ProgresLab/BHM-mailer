@@ -426,7 +426,9 @@ def prepare_campaign_send(campaign_id: int, contact_ids: list[int], mode: str = 
             raise ValueError("Campaign must be approved before sending.")
 
         contacts = fetch_contacts_by_ids(conn, unique_ids)
-        active_contacts = [contacts[contact_id] for contact_id in unique_ids if contacts.get(contact_id) and contacts[contact_id]["status"] == "active"]
+        from .selection import UNCERTAIN_CONTACT_SQL
+        uncertain_ids={r[0] for r in conn.execute('SELECT c.id FROM contacts c WHERE '+UNCERTAIN_CONTACT_SQL)}
+        active_contacts = [contacts[contact_id] for contact_id in unique_ids if contacts.get(contact_id) and contacts[contact_id]["status"] == "active" and contact_id not in uncertain_ids]
         if not active_contacts:
             return {
                 "started": False,
@@ -553,7 +555,7 @@ def finalize_campaign_status(conn: sqlite3.Connection, campaign_id: int) -> str:
                 'smtp_failed', 'rate_limited', 'failed_by_trace',
                 'quarantined_by_trace', 'bounced_later', 'delivery_unknown',
                 'failed', 'bounced', 'invalid', 'skipped_invalid',
-                'skipped_duplicate', 'cancelled'
+                  'skipped_duplicate', 'skipped_unsubscribed', 'cancelled'
             )), 0) AS error_count
         FROM email_sends
         WHERE campaign_id = ?

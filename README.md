@@ -8,6 +8,8 @@ Git tracks application source, documentation, branding assets, and the non-secre
 
 ## Setup and Run
 
+Controlled iteration (`BHM-CONTROLLED-2026-10-17`): Gmail reconciliation APPLIED and independent readback PASS. Campaign40:973 snapshots,661 historical SMTP acceptances (199 later bounces),312 identical pending,0 unknown/inflight,manual pause preserved.290 Gmail messages/286 DSN:4 new invalid+3 unsubscribed,7 later-bounce updates,10 audits;277 prior evidence duplicates skipped. SQLite/assets backup and replay no-op verified. SMTP transient/backoff/R6/uncertainty and IMAP bounded fetch/re-analysis implemented;115 isolated tests and browser acceptance passed. Port8000 stopped after identifying prior PID25844; startup still requires exact recovery approval for17/18/28/40. No real send/resume/new campaign/deploy. [Evidence, counts and activation boundary](docs/controlled-iteration-2026-10-17.md). All older runtime paragraphs below are historical.
+
 Current operator status (2026-10-16 23:33 CEST): **IMAP ON + SMTP ON**, <http://127.0.0.1:8000>, PID25844. Controlled activation and exact recovery approval completed; all old queues remain paused and no mail was sent. Use **`start-bhm-operational.bat`** after a future shutdown; do not launch another instance while8000 responds. New campaign preparation and its real-send confirmation are separate manual actions. [Activation and preservation evidence](docs/operational-preparation-2026-10-16.md). Older runtime paragraphs below are historical.
 
 For normal operation on Windows (IMAP ON + SMTP ON, separate campaign confirmation):
@@ -260,3 +262,11 @@ Keep its server window open. This launcher uses the existing venv, binds only127
 The current activation was started hidden using the same Python helper `tools/run_imap_safe.py`; the user need not launch it again while8000 is responding. Ordinary `start.bat` retains its existing `.env` behavior and does not provide this SMTP-OFF guarantee. Never use it as a replacement for the safe launcher in this approved mode.
 
 There is no Windows startup task/service. After sleep/process interruption, restart recovery still requires review and explicit operator resume for real queues; opening the browser is not a send instruction. The app automatically catches up IMAP by persisted UID. Unsubscribe coverage remains incomplete; no info mailbox/forwarding/public endpoint was changed.
+
+## Controlled reconciliation and queue continuity (2026-10-17)
+
+Use the existing offline Gmail prepare/apply tool with `--paused-history` only for separately authorized imports while the app is stopped. It holds port8000 and SMTP/IMAP OS locks, validates a durably paused queue and historical accepted attempts, backs up SQLite/assets, simulates exact changes and requires unchanged data/input/assets at apply. It never modifies pending rows or starts workers; the ordinary completed-queue `ensure_idle` gate remains.
+
+Safe SMTP4xx uses at least15 minutes, longer server waits and bounded retry/backoff. Permanent recipient errors continue other contacts; only invalid-address proof disables a contact. R6 waits at least1 hour for one probe per queue, then requires review if blocked. This is a local conservative policy, not a provider recovery guarantee. Unknown attempts never retry, including via a new campaign; three consecutive transport uncertainties stop the account. Accepted sends reset consecutive account cooldown counters. The50-failure quality warning uses receipt/attempt time, not import time, and never creates a resume loop.20s/1800s/300s and the singleton remain.
+
+IMAP initially fetches up to1MiB; recognized reports may expand once to8MiB. Incomplete MIME does not advance UID. `tools/diagnose_imap.py --max-reviews 1000` explicitly re-analyses known review UIDs on a private copy with full MIME and matching UIDVALIDITY. It never writes operational SQLite. Shared deduplication and receiver trust remain mandatory; automatic info-mailbox unsubscribe coverage remains incomplete. Private reports under output/backups must never enter Git. [Complete acceptance and limitations](docs/controlled-iteration-2026-10-17.md).

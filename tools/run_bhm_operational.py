@@ -59,11 +59,12 @@ def startup_preflight(db, worker, now=None):
             'inflight_sends': memory.execute("SELECT COUNT(*) FROM email_sends WHERE status='sending'").fetchone()[0],
             'inflight_attempts': memory.execute("SELECT COUNT(*) FROM send_attempt_history WHERE status='sending'").fetchone()[0],
             'uncertain': memory.execute('SELECT COUNT(*) FROM email_sends WHERE outcome_uncertain=1').fetchone()[0],
-            'reserved': memory.execute('SELECT COUNT(*) FROM smtp_control WHERE campaign_id IS NOT NULL').fetchone()[0],
+            'reserved': memory.execute('''SELECT COUNT(*) FROM smtp_control c WHERE c.campaign_id IS NOT NULL
+                AND NOT EXISTS(SELECT 1 FROM campaign_execution e WHERE e.campaign_id=c.campaign_id
+                    AND e.manual_pause=1 AND e.state IN ('manual_paused','interrupted'))''').fetchone()[0],
             'admin_notifications': memory.execute("SELECT COUNT(*) FROM unsubscribe_events WHERE notification_sent=0 OR notification_status IN ('queued','sending','uncertain')").fetchone()[0],
             'active_execution': memory.execute("SELECT COUNT(*) FROM campaign_execution WHERE state NOT IN ('completed','completed_with_errors','interrupted','manual_paused') OR (state IN ('interrupted','manual_paused') AND manual_pause<>1)").fetchone()[0],
             'account_cooldown': memory.execute('SELECT COUNT(*) FROM smtp_control WHERE blocked_until>?', (now,)).fetchone()[0],
-            'recent_failure_guard': int(worker.recent_delivery_failures(memory, now) >= 50),
         }
         if any(blockers.values()):
             raise ValueError('Aktywacja zablokowana; zachowano dane: '+json.dumps(blockers))
@@ -95,8 +96,9 @@ def startup_preflight(db, worker, now=None):
         for old, new in zip(original['campaign_execution'], recovered['campaign_execution']):
             if old == new:
                 continue
-            if old['state'] != 'interrupted' or old['manual_pause'] != 1 or any(
-                    new[k] != v for k, v in old.items() if k != 'updated'):
+            allowed={'updated'} if old['state']=='interrupted' else {'updated','state','problem'}
+            if old['state'] not in {'interrupted','manual_paused'} or old['manual_pause'] != 1 or new['state']!='interrupted' or any(
+                    new[k] != v for k, v in old.items() if k not in allowed):
                 raise ValueError('Recovery zmienia stan kolejki; potrzebna osobna zgoda.')
             approved_ids.append(old['campaign_id'])
         old_events = original['execution_events']
@@ -115,7 +117,7 @@ def startup_preflight(db, worker, now=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--approve-recovery-for', nargs='+', type=int, default=[], metavar='CAMPAIGN_ID',
-        help='Operator approval only: updated timestamp and one recovery event per listed already paused queue.')
+        help='Exact operator approval: recovery timestamps/events; manual-paused queues become interrupted, still paused. No send.')
     args = parser.parse_args(argv)
     configure()
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -137,7 +139,7 @@ def main(argv=None):
             if args.approve_recovery_for or not sys.stdin.isatty():
                 raise ValueError('Potrzebna dokladna zgoda na recovery: '+str(recovery_ids))
             expected = 'RECOVERY '+','.join(map(str, recovery_ids))
-            print('Startup zmieni tylko updated i doda po 1 zdarzeniu recovery dla: '+str(recovery_ids))
+            print('Startup zapisze updated i po 1 zdarzeniu recovery; reczne pauzy przejda w interrupted bez wznowienia: '+str(recovery_ids))
             print('Nie wznowi kolejek. Zatwierdz tylko po backupie i preflight kopii.')
             if input('Wpisz '+expected+' aby zatwierdzic: ').strip() != expected:
                 raise ValueError('Recovery niezatwierdzone; aplikacja nieuruchomiona.')

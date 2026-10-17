@@ -10,6 +10,7 @@ import json
 import os
 import re
 import smtplib
+import ssl
 import threading
 import time
 
@@ -25,13 +26,30 @@ WINDOW_LIMITS = ((300, 20), (3600, 200))
 
 
 def recent_delivery_failures(conn, now):
-    """Account-wide distinct failures, including verified asynchronous bounces."""
-    return conn.execute('''SELECT COUNT(*) FROM (
-        SELECT send_id FROM send_attempt_history
-        WHERE mode='smtp' AND status='smtp_failed' AND started>=?
-        UNION SELECT id FROM email_sends WHERE status='bounced_later'
-        AND julianday(final_status_at)>=julianday(?)
-    )''',(now-3600,stamp(now-3600))).fetchone()[0]
+    """List-quality signal by occurrence/receipt, NEVER reconciliation time.
+
+    Legacy DSNs already carry Gmail internal_date/IMAP INTERNALDATE in the
+    shared ledger. Unknown receipt dates cannot establish a fresh failure.
+    """
+    ids = {r[0] for r in conn.execute('''SELECT send_id FROM send_attempt_history
+        WHERE mode='smtp' AND status='smtp_failed' AND started BETWEEN ? AND ?''', (now-3600,now))}
+    for row in conn.execute('SELECT message FROM execution_events WHERE message LIKE ?', (reconciliation.PREFIX+'%',)):
+        try:
+            e = json.loads(row[0][len(reconciliation.PREFIX):])
+            received = e.get('received_at') or int(e.get('date') or 0)/1000
+            if e.get('bounce') and now-3600 <= received <= now and e.get('send_id'):
+                ids.add(e['send_id'])
+        except (ValueError, TypeError):
+            continue
+    return len(ids)
+
+
+def warn_list_quality(conn, cid, now):
+    count = recent_delivery_failures(conn, now)
+    if count >= 50 and not conn.execute('''SELECT 1 FROM execution_events WHERE campaign_id=?
+            AND created>? AND message LIKE 'Jakość listy:%' LIMIT 1''',(cid,now-3600)).fetchone():
+        event(conn,cid,now,f'Jakość listy: {count} odrzuceń/zwrotów w godzinie. Ostrzeżenie; dalszy ruch zależy od odpowiedzi SMTP.')
+    return count
 
 
 def temporary_policy(exc, detail):
@@ -129,8 +147,10 @@ def resume(campaign_id, now=None):
             raise ValueError('Brak kolejki do wznowienia.')
         if row['state'] == 'running' and not row['manual_pause']:
             return  # Idempotent double-click; do not reset the active-time anchor.
-        if conn.execute('SELECT 1 FROM email_sends WHERE campaign_id=? AND outcome_uncertain=1 LIMIT 1', (campaign_id,)).fetchone():
-            raise ValueError('Nierozstrzygnięta próba SMTP. Zweryfikuj Message Trace lub zapisz decyzję w historii.')
+        # Uncertain rows remain excluded by the queue query. Resume authorizes
+        # only other pending recipients; retry still requires resolve_uncertain.
+        if conn.execute("SELECT 1 FROM email_sends WHERE campaign_id=? AND status='sending'", (campaign_id,)).fetchone():
+            raise ValueError('Próba SMTP jest nadal w toku.')
         settings = mailer.get_mail_settings()
         if row['mode'] == 'smtp' and not mailer.smtp_is_configured(settings):
             raise ValueError('Konfiguracja SMTP nie pozwala bezpiecznie wznowić realnej kolejki.')
@@ -212,9 +232,6 @@ class Engine:
             if row['smtp_cooldown_until']:
                 if now < max(row['smtp_cooldown_until'],control['blocked_until']):
                     return
-                if conn.execute('SELECT 1 FROM email_sends WHERE campaign_id=? AND outcome_uncertain=1',(cid,)).fetchone():
-                    conn.execute("UPDATE campaign_execution SET state='problem',problem='Wynik SMTP niepewny; bez automatycznego wznowienia.' WHERE campaign_id=?",(cid,))
-                    return
                 conn.execute("UPDATE email_sends SET status='pending' WHERE campaign_id=? AND status='rate_limited' AND outcome_uncertain=0",(cid,))
                 conn.execute("UPDATE campaign_execution SET state='running',smtp_cooldown_until=0,updated=?,problem='' WHERE campaign_id=?",(now,cid))
                 event(conn,cid,now,'Bezpieczny cooldown SMTP zakończony; automatyczne wznowienie pozostałej kolejki.')
@@ -237,10 +254,6 @@ class Engine:
                                      JOIN contacts c ON c.id=s.contact_id
                                      WHERE s.campaign_id=? AND s.status='pending' AND s.outcome_uncertain=0 ORDER BY s.id LIMIT 1""", (cid,)).fetchone()
             if not pending:
-                unresolved = conn.execute('SELECT 1 FROM email_sends WHERE campaign_id=? AND outcome_uncertain=1 LIMIT 1', (cid,)).fetchone()
-                if unresolved:
-                    conn.execute("UPDATE campaign_execution SET state='problem',problem='Nierozstrzygnięte próby wymagają weryfikacji.' WHERE campaign_id=?", (cid,))
-                    return
                 status = mailer.finalize_campaign_status(conn, cid)
                 conn.execute('UPDATE campaign_execution SET state=? WHERE campaign_id=?', (status, cid))
                 conn.execute('UPDATE smtp_control SET campaign_id=NULL WHERE id=1')
@@ -253,6 +266,11 @@ class Engine:
             if pending['contact_status'] != 'active':
                 status = 'skipped_unsubscribed' if pending['contact_status'] == 'unsubscribed' else 'skipped_invalid'
                 mailer.update_send_status(conn, pending['id'], status, final_status_at=stamp(now))
+                return
+            from .selection import UNCERTAIN_CONTACT_SQL
+            if conn.execute('SELECT 1 FROM contacts c WHERE c.id=? AND '+UNCERTAIN_CONTACT_SQL,(pending['contact_id'],)).fetchone():
+                mailer.update_send_status(conn,pending['id'],'skipped_duplicate',
+                    error_message='Wcześniejsza próba tego kontaktu ma niepewny wynik. Bez ponowienia.',final_status_at=stamp(now))
                 return
             # Belt-and-braces for historical duplicate rows: no repeat of a previous attempt.
             if conn.execute("""SELECT 1 FROM email_sends WHERE campaign_id=? AND contact_id=? AND id<>?
@@ -277,11 +295,8 @@ class Engine:
             if row['mode']=='smtp' and row['identity_fingerprint'] != identity_fingerprint(settings):
                 conn.execute("UPDATE campaign_execution SET state='problem',problem='Zmieniła się tożsamość SMTP. Wysyłka zablokowana.' WHERE campaign_id=?",(cid,))
                 return
-            if row['mode']=='smtp' and recent_delivery_failures(conn,now)>=50:
-                message='Co najmniej 50 nieudanych doręczeń w ostatniej godzinie. Wymagana kontrola operatora.'
-                conn.execute("UPDATE campaign_execution SET state='problem',problem=? WHERE campaign_id=?",(message,cid))
-                event(conn,cid,now,message)
-                return
+            if row['mode']=='smtp':
+                warn_list_quality(conn,cid,now)
             # A missing asset blocks the queue before any SMTP attempt.
             if pending['banner_asset'] and not asset_path(pending['banner_asset']).is_file():
                 conn.execute("UPDATE campaign_execution SET state='problem',problem='Brak zapisanego banera. Przywróć asset z kopii.' WHERE campaign_id=?", (cid,))
@@ -324,6 +339,9 @@ class Engine:
                                           smtp_code=result.smtp_code, provider_message_id=result.provider_message_id,
                                           accepted_at=stamp(end), sent_at=stamp(end), **common)
                 mailer.mark_contact_sent(conn, pending['contact_id'], stamp(end))
+                # This counter bounds consecutive account-wide transients;
+                # a successful acceptance ends that transient episode.
+                conn.execute("UPDATE campaign_execution SET auto_resume_count=0,problem='',failure_kind='' WHERE campaign_id=?",(cid,))
             else:
                 error = mailer.smtp_exception_text(failure)
                 # Only explicit SMTP negative replies prove non-acceptance. A transport
@@ -331,29 +349,51 @@ class Engine:
                 code,definite,temporary,safe,wait = temporary_policy(failure,error)
                 enhanced = re.search(r'\b5\.\d+\.\d+\b',error)
                 kind,target = reconciliation.classify('failed',enhanced[0] if enhanced else '',error)
-                recipient_failure = (isinstance(failure,smtplib.SMTPRecipientsRefused) and definite and not temporary
-                                     and kind != 'sender_policy' and (target is not None or
-                                     re.search(r'invalid recipient|no mailbox\b',error,re.I)) and
-                                     not re.search(r'auth|credential|account|reputation|spam|block|policy',error,re.I))
+                recipient_reply = ((isinstance(failure,smtplib.SMTPRecipientsRefused) and len(failure.recipients)==1) or
+                    (isinstance(failure,smtplib.SMTPDataError) and definite and
+                     ((not temporary and target=='invalid') or bool(re.search(r'\b4\.2\.\d+\b',error)))))
+                policy_error = bool(re.search(r'auth|credential|account|reputation|spam|block|policy|\btls\b|certificate|encrypt|4\.7\.|5\.7\.|\[R6\]',error,re.I))
+                recipient_failure = recipient_reply and definite and not temporary and kind != 'sender_policy' and not policy_error
                 status = 'rate_limited' if temporary else 'smtp_failed' if definite else 'delivery_unknown'
                 mailer.update_send_status(conn, pending['id'], status, error_message=error, smtp_code=str(code or ''),
                                           final_status_at=stamp(end), **common)
                 if not definite:
                     conn.execute('UPDATE email_sends SET outcome_uncertain=1 WHERE id=?', (pending['id'],))
-                if recipient_failure and mailer.looks_like_permanent_recipient_failure(str(code)):
-                    contact_status='invalid' if mailer.looks_like_invalid_address(error) else 'bounced'
-                    conn.execute("UPDATE contacts SET status=?,updated_at=? WHERE id=? AND status<>'unsubscribed'", (contact_status,stamp(end),pending['contact_id']))
-                if not recipient_failure:
-                    auto = safe and current['auto_resume_count'] < MAX_AUTO_RESUMES and recent_delivery_failures(conn,end)<50
-                    message = ('Tymczasowa, potwierdzona odmowa SMTP; automatyczne wznowienie po cooldownie.' if auto else
-                               'Tymczasowa odmowa SMTP wymaga operatora (polityka/limit ponowień). Sprawdź historię.' if temporary
-                               else 'Problem SMTP. Sprawdź historię przed wznowieniem.')
+                if recipient_failure and target == 'invalid':
+                    conn.execute("UPDATE contacts SET status='invalid',updated_at=? WHERE id=? AND status NOT IN ('unsubscribed','invalid')", (stamp(end),pending['contact_id']))
+                if recipient_failure:
+                    event(conn,cid,end,'Trwała odmowa odbiorcy; bez akceptacji SMTP. Kontynuacja pozostałych adresów.')
+                else:
+                    # R6 is account-wide. One conservative probe per queue,
+                    # after at least one hour; an explicit longer wait wins.
+                    r6 = definite and temporary and bool(re.search(r'\[R6\]',error,re.I)) and not isinstance(failure,(smtplib.SMTPAuthenticationError,smtplib.SMTPSenderRefused))
+                    probed = conn.execute("SELECT 1 FROM execution_events WHERE campaign_id=? AND message LIKE 'Provider R6:%' LIMIT 1",(cid,)).fetchone()
+                    if r6:
+                        wait=max(wait,3600)
+                    previous = conn.execute("SELECT COUNT(*) FROM send_attempt_history WHERE send_id=? AND status='rate_limited'",(pending['id'],)).fetchone()[0]
+                    recipient_exhausted = safe and recipient_reply and previous >= 2
+                    if safe and recipient_reply:
+                        wait=max(wait,900*(2**min(previous,2)))
+                    auto = (r6 and not probed) or (safe and not recipient_exhausted and current['auto_resume_count'] < MAX_AUTO_RESUMES)
+                    uncertain = not definite and isinstance(failure,(TimeoutError,ConnectionError,smtplib.SMTPServerDisconnected)) and not isinstance(failure,ssl.SSLError)
+                    unknowns = conn.execute('''SELECT status FROM send_attempt_history WHERE mode='smtp' ORDER BY id DESC LIMIT 3''').fetchall()
+                    uncertain_continue = uncertain and not (len(unknowns)>=3 and all(a[0]=='delivery_unknown' for a in unknowns[1:]))
+                    message = ('Provider R6: oczekiwanie minimum 60 minut; potem jedna ograniczona próba, bez gwarancji odblokowania.' if r6 and auto else
+                               'Provider R6 nadal blokuje konto. Wymagana kontrola dostawcy/operatora.' if r6 else
+                               'Limit prób tego odbiorcy; niewysłany. Kontynuacja pozostałych adresów.' if recipient_exhausted else
+                               'Niepewna próba odłożona do weryfikacji; bez ponowienia. Kontynuacja innych adresów.' if uncertain_continue else
+                               'Tymczasowa, potwierdzona odmowa SMTP; automatyczne wznowienie po cooldownie.' if auto else
+                               'Problem SMTP / konfiguracji lub limit kolejnych prób. Sprawdź historię przed wznowieniem.')
+                    if recipient_exhausted:
+                        conn.execute("UPDATE email_sends SET status='smtp_failed' WHERE id=?",(pending['id'],))
+                        conn.execute('UPDATE campaign_execution SET auto_resume_count=0 WHERE campaign_id=?',(cid,))
                     # A manual pause made while SMTP was in flight always wins.
-                    state='manual_paused' if current['manual_pause'] else 'auto_cooldown' if auto else 'problem'
+                    state='manual_paused' if current['manual_pause'] else 'auto_cooldown' if auto else 'running' if recipient_exhausted or uncertain_continue else 'problem'
                     conn.execute('''UPDATE campaign_execution SET state=?,problem=?,smtp_cooldown_until=?,
                         auto_resume_count=auto_resume_count+?,failure_kind=? WHERE campaign_id=?''',
                         (state,message,end+wait if auto else 0,int(auto),str(code or '')+' '+error,cid))
-                    conn.execute('UPDATE smtp_control SET blocked_until=MAX(blocked_until,?) WHERE id=1', (end + (wait if temporary else 300),))
+                    if auto or state=='problem':
+                        conn.execute('UPDATE smtp_control SET blocked_until=MAX(blocked_until,?) WHERE id=1', (end + (wait if temporary else 300),))
                     event(conn, cid, end, message)
             conn.execute('''UPDATE campaign_execution SET smtp_seconds=smtp_seconds+?,smtp_attempts=smtp_attempts+1
                             WHERE campaign_id=?''', (max(0, end-now), cid))
@@ -421,6 +461,7 @@ def execution_payload(campaign_id, now=None):
         current = conn.execute("SELECT email FROM email_sends WHERE campaign_id=? AND status='sending' ORDER BY id LIMIT 1", (campaign_id,)).fetchone()
         next_row = conn.execute("SELECT email FROM email_sends WHERE campaign_id=? AND status='pending' ORDER BY id LIMIT 1", (campaign_id,)).fetchone()
         counts['pending'] += conn.execute("SELECT COUNT(*) FROM email_sends WHERE campaign_id=? AND status='rate_limited' AND outcome_uncertain=0",(campaign_id,)).fetchone()[0]
+        quality_failures = recent_delivery_failures(conn,now)
         events = conn.execute("SELECT created,message FROM execution_events WHERE campaign_id=? AND message NOT LIKE 'gmail-reconciliation-v1:%' ORDER BY id DESC LIMIT 8", (campaign_id,)).fetchall()
     active = row['active_seconds'] + (max(0, now-row['updated']) if row['state']=='running' and not row['manual_pause'] else 0)
     remaining = counts['pending'] + counts['sending']
@@ -434,7 +475,9 @@ def execution_payload(campaign_id, now=None):
     future_cycle = 0 if row['cooldown_until'] else cycle
     breaks = max(0, math.floor((future_cycle+max(0,work-0.001))/ACTIVE_PERIOD)) if remaining else 0
     eta = work + breaks*BREAK_SECONDS + max(cooldown,smtp_cooldown,until_next)
+    provider_wait = '[R6]' in row['failure_kind'] and row['state']=='auto_cooldown'
     paused = row['manual_pause'] or row['state'] in {'problem','interrupted'}
+    eta_uncertain = bool(paused or row['state']=='auto_cooldown' or counts['uncertain'])
     finished = row['state'] in {'completed','completed_with_errors'}
     if finished:
         eta = 0
@@ -445,8 +488,10 @@ def execution_payload(campaign_id, now=None):
                 resume_at=stamp(max(row['smtp_cooldown_until'],control['blocked_until'])) if row['smtp_cooldown_until'] else None,
                 failure_detail=row['failure_kind'], auto_resume_count=row['auto_resume_count'],
                 next_break_seconds=max(0,math.ceil(ACTIVE_PERIOD-cycle)),
-                eta_seconds=None if paused else round(eta), eta_uncertain=bool(paused),
-                eta_finish=None if paused else stamp(now+eta), problem=row['problem'],
+                eta_seconds=None if eta_uncertain else round(eta), eta_uncertain=eta_uncertain,
+                eta_finish=None if eta_uncertain else stamp(now+eta), problem=row['problem'],
+                provider_wait=provider_wait, quality_failures=quality_failures,
+                quality_warning=f'Wysoka liczba zwrotów/odrzuceń: {quality_failures} w godzinie. Sprawdź jakość listy.' if quality_failures>=50 else '',
                 current_email=current['email'] if current else '', next_email=next_row['email'] if next_row else '',
                 counts=counts, processed=processed, percent=round(processed/max(1,counts['total'])*100,1),
                 recent_events=[dict(e) for e in events], interval=INTERVAL)
