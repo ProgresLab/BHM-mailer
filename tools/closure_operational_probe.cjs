@@ -29,6 +29,8 @@ const out=path.resolve('output/closure-2026-10-17');
     assert.equal(status.counts.pending,0);assert.equal(status.counts.uncertain,0);
     assert.equal(await page.locator('[data-control="resume"]').isDisabled(),true);
     assert.equal(await page.locator('[data-monitor="cancelled"]').innerText(),'312');
+    assert((await page.locator('[data-monitor="notice"]').innerText()).includes('Trwale zakończona'));
+    assert.equal(await page.locator('[data-monitor="eta"]').innerText(),'Zakończona');
     checks.push('closed40: 661 historical acceptances,312 cancelled,zero pending/unknown,resume disabled');
     await page.screenshot({path:path.join(out,'closed-monitor-desktop.png'),mask:[page.locator('.page-head'),page.locator('[data-monitor-events]')],maskColor:'#e2e8f0'});
     for(const id of [17,18,28]){

@@ -14,6 +14,8 @@ Local mailing application for importing and managing BHM Chemicals contacts, pre
 
 ## Current Status
 
+Permanent closure and activation (`BHM-CLOSE-ACTIVATE-2026-10-17`): **DONE; actual127.0.0.1:8000 PID21732, IMAP ON / SMTP ON**. Campaign40 is completed_with_errors:661 historical SMTP acceptances (199 later bounces),312 cancelled without send timestamps,0 pending/unknown. Reservation released; resume rejected. Fresh199-message Gmail scan across accepted-attempt campaigns36/37/38/40:0 new invalid/0 unsubscribe,197 duplicates,1 new unmatched review; previous4/3 changes preserved. Verified DB/assets backups, exact copied closure/replay and independent readback.119 tests,1000-contact autonomous SMTP simulation (1000 accepted/1006 fake calls/0 manual resumes),8 synthetic browser checks and actual8000 desktop/mobile GET-only acceptance passed. Applied only authorized recovery updated/events for17/18/28; no40 recovery, no real SMTP attempt/new campaign/resume. New campaign editor and empty selection ready; QA stopped. [Full report](docs/close-activate-2026-10-17.md). All older runtime paragraphs below are historical.
+
 Controlled iteration (`BHM-CONTROLLED-2026-10-17`): Gmail reconciliation APPLIED and independent readback PASS. Campaign40:973 snapshots,661 historical SMTP acceptances (199 later bounces),312 identical pending,0 unknown/inflight,manual pause preserved.290 Gmail messages/286 DSN:4 new invalid+3 unsubscribed,7 later-bounce updates,10 audits;277 prior evidence duplicates skipped. SQLite/assets backup and replay no-op verified. SMTP transient/backoff/R6/uncertainty and IMAP bounded fetch/re-analysis implemented;115 isolated tests and browser acceptance passed. Port8000 stopped after identifying prior PID25844; startup still requires exact recovery approval for17/18/28/40. No real send/resume/new campaign/deploy. [Evidence, counts and activation boundary](docs/controlled-iteration-2026-10-17.md). All older runtime paragraphs below are historical.
 
 Operational preparation (`BHM-OPERATIONAL-2026-10-16`): **DONE — IMAP ON + SMTP ON**, actual localhost8000 PID25844, started once through `start-bhm-operational.bat --approve-recovery-for 17 18 28` at2026-10-16 23:33 CEST after exact operator approval. Fresh SQLite/2-assets backup and copied startup preflight passed. Graceful shutdown of confirmed18152; port and both locks released before activation. Independent readback: only3 approved updated timestamps+3 appended recovery events and ordinary IMAP last_success/next_sync changes; all other tables/schema/assets/.env unchanged,0 SMTP/admin attempts added.17/18/28 remain interrupted/manual-paused. Actual8000 browser confirms IMAP/SMTP ON, default dry-run and unchecked separate SMTP acknowledgement; no campaign start/resume. Last successful IMAP23:33:07 CEST, next23:48:07,0 contact changes/errors. Contacts5303 active/355 invalid/18 unsubscribed/0 bounced;76 active contacts with historical bounced_later still require evidence review. Operator25844 left running; QA ports free. See `docs/operational-preparation-2026-10-16.md`. Runtime statements below are historical.
@@ -128,6 +130,20 @@ Update this brief only when project scope, status, architecture, integrations, d
 
 ## Requirements & Acceptance
 
+Current task L01–L08: `BHM-CLOSE-ACTIVATE-2026-10-17`.
+
+| ID / Requirement | Implementation | Evidence | Status |
+| --- | --- | --- | --- |
+| L01 exact source/runtime | canonical root/main/origin/de7ef9e;8000 initially free;single standard operational launcher | OS process/port;runtime source commit38e16ef and hashes;GET backend acceptance | PASS actual21732 |
+| L02 permanent40 closure |312 unattempted pending→cancelled;campaign/execution completed_with_errors;one closure audit;reservation NULL;resume rejected | exact expected-count/inflight/uncertainty gates;copy simulation;independent readback | APPLIED |
+| L03 preserve real history |973 snapshots,661 acceptances incl199 later bounces;no contact/status/last_sent_at/attempt/asset deletion or change | full-row delta validator,backup hashes,readback,zero SMTP attempt additions | PASS |
+| L04 fresh Gmail |01:40:38–13:40:38 CEST;2+1 pages,199 complete MIME;accepted campaigns36/37/38/40 evaluated |0 new invalid/0 unsubscribe/0 later-bounce changes;197 duplicates;1 new unmatched review | PASS;review retained |
+| L05 autonomy |20s/1800s/300s and bounded safe retry/R6/unknown guards retained;normal transient1000 contacts without manual resume |1006 fake calls/1000 accepted/29600 virtual seconds/0 manual resumes;119 tests | PASS synthetic |
+| L06 exact startup |post-close copied init no-op;only updated+one audit each17/18/28,40 unchanged |fresh DB+2-assets backup;actual full readback;.env/source hashes preserved | APPLIED within explicit approval |
+| L07 operator readiness |IMAP ON/SMTP ON;new editor200;existing39 empty selection;500/page/last-send sort;40 resume disabled |actual8000 Chromium desktop/mobile GET-only;IMAP scan success/no error;QA ports released | PASS actual runtime |
+| L08 context/Git/privacy |one new task entry;prior local docs preserved outside commit;private MIME/DB/logs/backups ignored |source and final context diffs reviewed;remote SHA verified at publication | DONE;no deploy |
+
+
 Current task C01–C09: `BHM-CONTROLLED-2026-10-17`.
 
 | ID / Requirement | Implementation | Evidence | Status |
@@ -238,6 +254,9 @@ Single acceptance register: R01–R15 cover `BHM-MODERNIZATION-2026-10-15`; H01�
 | S08 tests/context/Git gate | 47 isolated tests, compileall, JS syntax, 14 browser scenarios; context pack reviewed; one dated task entry; unchanged HEAD/index | `output/recipient-qa/tests.log`, `browser.json`, `closeout-gate.json`; diagnosis report | PASS local; GitHub tip refresh unavailable due network; no commit/push/deploy |
 
 ## Change Log
+
+- 2026-10-17 — `BHM-CLOSE-ACTIVATE-2026-10-17`: Explicitly authorized permanent40 closure:312 pending→cancelled,completed_with_errors campaign/execution,one audit and SMTP reservation released;661 acceptances/199 bounces,all snapshots/contact timestamps/attempt history preserved,resume rejected. Fresh199-message12h Gmail scan evaluated36/37/38/40:0 new invalid/0 unsubscribe,197 duplicates,1 new unmatched review. Verified consistent DB/2-assets backup,exact simulation/replay/live readback and post-close startup copy.119 tests and1000-contact transient run1000 accepted/1006 fake calls/0 manual resumes passed;8 synthetic browser checks and actual8000 desktop/mobile GET-only acceptance. Standard launcher activated IMAP+SMTP ON,PID21732,only approved updated/3 recovery audits for17/18/28;40 unchanged,0 real SMTP attempts. New editor/empty selection ready,QA stopped. Terminal monitor shows cancelled counts and permanent closure. Context Pack Closeout complete;exactly one new task entry,source-only GitHub publication,earlier local docs preserved,no deploy. See docs/close-activate-2026-10-17.md.
+
 
 - 2026-10-17 — `BHM-CONTROLLED-2026-10-17`: Reconciled290 Gmail messages from the fixed12h window for paused campaign40:4 invalid+3 unsubscribed,7 later bounces,10 audits;277 duplicates skipped. Verified consistent SQLite/2-assets backup, exact simulation/replay/live readback;973 snapshots/661 acceptances/312 pending and all send dates/attempt history preserved. Replaced50-failure loop with receipt-time quality warning;bounded transient backoff,R6 probe,unknown isolation and cross-campaign retry guard. Diagnosed all305 IMAP reviews,41 over1MiB;bounded8MiB fetch and UID-safe re-analysis preserve trust.115 isolated tests,1000-contact virtual-hours failures and desktop/mobile UI/API/SQLite/reload QA passed. Prior identified PID25844 stopped;8000 awaits separate exact recovery approval for17/18/28/40. No real SMTP send/resume,new campaign,Gmail mutation or deploy. Context Pack Closeout: one register/one task entry;validated source authorized for origin/main,earlier local docs preserved separately. See docs/controlled-iteration-2026-10-17.md.
 

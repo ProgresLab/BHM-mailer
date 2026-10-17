@@ -428,12 +428,12 @@ function initMonitor() {
       Object.entries(d.counts).forEach(([key,value])=>set(key,value));
       set('current_email',d.current_email || 'Brak próby w toku'); set('next_email',d.next_email || 'Brak');
       set('elapsed',duration(d.elapsed_seconds)); set('active',duration(d.active_seconds));
-      set('eta',d.eta_uncertain?'Wstrzymane / niepewne':`Około ${Math.ceil(d.eta_seconds/60)} min`);
-      set('finish',d.eta_finish?`Około ${new Date(d.eta_finish).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Warsaw'})}`:'Niepewne');
+      set('eta',done?'Zakończona':d.eta_uncertain?'Wstrzymane / niepewne':`Około ${Math.ceil(d.eta_seconds/60)} min`);
+      set('finish',done?'Zakończona':d.eta_finish?`Około ${new Date(d.eta_finish).toLocaleTimeString('pl-PL',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Warsaw'})}`:'Niepewne');
       set('interval','20 s / jedna próba'); set('next_attempt',done?'—':duration(d.next_attempt_seconds));
       set('next_break',done?'—':d.cooldown_seconds?`Trwa przerwa: ${duration(d.cooldown_seconds)}`:duration(d.next_break_seconds));
       set('progress',d.percent+'%'); root.querySelector('[data-monitor-progress]').style.width=d.percent+'%';
-      set('notice',d.manual_pause ? (d.current_email?'Pauza zlecona — trwa kończenie rozpoczętej próby.':'Kampania oczekuje na ręczne wznowienie.') : d.execution_state==='auto_cooldown'?`${d.problem} Najwcześniejsza bezpieczna próba ${new Date(d.resume_at).toLocaleTimeString('pl-PL',{timeZone:'Europe/Warsaw'})}, za ${duration(d.smtp_cooldown_seconds)}. ${d.failure_detail}`:d.execution_state==='auto_break'?`Automatyczna przerwa 5 minut — wznowienie za ${duration(d.cooldown_seconds)}.`:d.problem || (done?'Kolejka rozliczona. Błędy i niepewne próby sprawdź w historii.':'Kolejka pracuje w tle.'));
+      set('notice',done ? (d.problem || 'Kolejka rozliczona. Błędy i niepewne próby sprawdź w historii.') : d.manual_pause ? (d.current_email?'Pauza zlecona — trwa kończenie rozpoczętej próby.':'Kampania oczekuje na ręczne wznowienie.') : d.execution_state==='auto_cooldown'?`${d.problem} Najwcześniejsza bezpieczna próba ${new Date(d.resume_at).toLocaleTimeString('pl-PL',{timeZone:'Europe/Warsaw'})}, za ${duration(d.smtp_cooldown_seconds)}. ${d.failure_detail}`:d.execution_state==='auto_break'?`Automatyczna przerwa 5 minut — wznowienie za ${duration(d.cooldown_seconds)}.`:d.problem || 'Kolejka pracuje w tle.');
       set('quality_warning',d.quality_warning || '');
       root.querySelector('[data-monitor="quality_warning"]').hidden=!d.quality_warning;
       root.querySelector('[data-control="pause"]').disabled=done || d.manual_pause;
