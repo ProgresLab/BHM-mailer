@@ -455,6 +455,7 @@ def execution_payload(campaign_id, now=None):
         counts = conn.execute('''SELECT COUNT(*) AS total, SUM(status='pending') AS pending,
             SUM(status='sending') AS sending, SUM(accepted_at IS NOT NULL OR status='sent') AS accepted,
             SUM(status='dry_run') AS dry_run, SUM(status LIKE 'skipped_%') AS skipped,
+            SUM(status='cancelled') AS cancelled,
             SUM(status IN ('smtp_failed','rate_limited','delivery_unknown','failed_by_trace','bounced_later','quarantined_by_trace')) AS errors,
             SUM(outcome_uncertain=1) AS uncertain FROM email_sends WHERE campaign_id=?''', (campaign_id,)).fetchone()
         counts = {k: int(v or 0) for k, v in dict(counts).items()}
