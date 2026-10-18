@@ -1,6 +1,6 @@
 # PROJECT_BRIEF.md
 
-Last updated: 2026-10-17
+Last updated: 2026-10-18
 
 Status: in development
 
@@ -13,6 +13,8 @@ BHM Mailer / BHM Chemicals Mailing Tool
 Local mailing application for importing and managing BHM Chemicals contacts, preparing single-language campaigns, previewing email output, selecting recipients, sending in dry-run or configured SMTP mode, and reviewing campaign delivery/status history.
 
 ## Current Status
+
+Gmail double-check (`BHM-GMAIL-DOUBLECHECK-2026-10-18`): **DONE, offline**. Latest campaign42 and execution remain completed_with_errors;1000 historical acceptances preserved (654 accepted_by_smtp+346 bounced_later). Full-history scoped Gmail scan:1980 candidate messages,38 fully paginated search pages,complete MIME plus4 RAW fallbacks;5 new invalid+3 unsubscribed,5 hard-bounce projections and17 evidence audits applied. Final contacts:4528 active/1119 invalid/29 unsubscribed.1619 previously reconciled reports (1070 IMAP/549 Gmail)+1 in-batch duplicate skipped;196 delayed,89 policy and224 unresolved reports retained without contact changes. Consistent SQLite/WAL+2-assets backup,exact simulation,independent all-row readback,integrity OK/FK0 and no-op replay passed;119 isolated tests and compileall passed.8000/SMTP/IMAP were stopped at entry and remain stopped;no campaign start/closure/resume,recovery,migration or real send. [Report](docs/gmail-doublecheck-2026-10-18.md). Older runtime statements below are historical.
 
 Offline campaign41 closure (`BHM-CLOSE41-OFFLINE-2026-10-17`): **DONE within the final offline scope**. Campaign/execution completed_with_errors;713 historical SMTP acceptances preserved (223 now bounced_later),287 unattempted rows cancelled without sent_at/accepted_at or contact last-send changes. All287 remain active/eligible for explicit future selection;resume rejected and reservation released. Full-history Gmail scan:1153 complete MIME messages,24 search pages,12 new invalid+5 unsubscribed,21 later-bounce projections,32 evidence audits;956 duplicates skipped and162 unresolved reports retained privately. Consistent DB/2-assets backup,exact copy simulation,independent per-recipient readback and Gmail/closure no-op replay passed.119 isolated tests,14 recipient browser scenarios,8 sync/sort browser checks and compileall passed. No real SMTP,new campaign,Gmail changes or migration. Operator8000 and QA ports are free. User explicitly declined startup/recovery;ready for manual start-bhm-operational.bat,whose current copy preflight requires updated+one recovery event each for17/18/28. [Report](docs/campaign41-offline-2026-10-17.md). Earlier runtime paragraphs are historical.
 
@@ -131,6 +133,18 @@ Update this brief only when project scope, status, architecture, integrations, d
 
 
 ## Requirements & Acceptance
+
+Current task G42-01–G42-07: `BHM-GMAIL-DOUBLECHECK-2026-10-18`.
+
+| ID / Requirement | Evidence and result | Status |
+| --- | --- | --- |
+| G42-01 source/runtime | canonical root,main,origin;local and fresh remote89ccc2b;latest42 completed_with_errors;no in-flight SMTP/reservation/active IMAP;8000 and both lock types free | VERIFIED |
+| G42-02 complete Gmail | three scoped in:anywhere searches without lower cutoff;20+17+1 pages;1980 unique MIME,4 RAW;available dates2026-07-02 to2026-10-18;final three-query head rescan no new IDs | COMPLETE at09:58:49 CEST |
+| G42-03 deterministic evidence | existing parser/plan/apply;accepted campaigns36/37/38/40/41/42;recipient/Message-ID/time/source/token/snapshot checks;unsubscribe priority | VERIFIED;224 unresolved |
+| G42-04 exact authorized delta |5 invalid+3 unsubscribed,5 later hard bounces,17 audits;policy/delay/review never change contact or send status;no source/parser change | APPLIED |
+| G42-05 backup/readback/idempotency | fresh SQLite backup API includes committed WAL;2 immutable assets copied/hash-verified;exact simulation and independent full-table comparison;integrity OK/FK0;all six campaign replays no-op | PASS |
+| G42-06 history/eligibility/tests | all dates/acceptance columns/attempts/snapshots/campaign and execution rows preserved;1148 inactive contacts excluded,4528 eligible;119 isolated tests+compileall | PASS;no app/QA startup |
+| G42-07 context/privacy/Git | AGENTS/README reviewed unchanged;one new task register and one appended dated entry;aggregate report only;prior local docs/private data excluded from task commit | Validated for authorized main commit/push;final remote receipt recorded separately |
 
 Current task F01–F08: `BHM-CLOSE41-OFFLINE-2026-10-17` (final operator instruction: offline only).
 
@@ -293,3 +307,5 @@ Single acceptance register: R01–R15 cover `BHM-MODERNIZATION-2026-10-15`; H01�
 - 2026-10-15 — `BHM-HTTP500-2026-10-15`: Repaired stale port-8000 handler/new-template mismatch (`form` undefined) by loading the already-correct canonical source in a fresh runtime. PID 15184 remains running with SMTP OFF; actual `/campaigns/new` HTTP 200, editor/bold/link and 1440/390/360 screenshots PASS with no JS/asset errors. Added regression coverage: 41 isolated tests and compileall PASS; QA save/reopen/banner previews PASS. Verified consistent operational backup and no-op initialization. Following a verification-script incident and explicit second-start approval, the final full-table comparison found only 3 updated recovery timestamps and 6 authorized new events. Repeated recovery events reproduced in memory; mechanism unchanged. No contact/campaign/message-history changes, migration, `.env` edit, real SMTP, commit, push or deploy. Exactly one task entry retained.
 
 - 2026-10-17 22:47:41 CEST — `BHM-CLOSE41-OFFLINE-2026-10-17`: Permanently closed41 with287 unattempted pending→cancelled and713 historical SMTP acceptances preserved (223 later bounces after reconciliation);all1000 snapshots,attempts,contacts and last-send dates retained,resume rejected,reservation released. Full-history read-only Gmail scan1153 complete MIME/24 pages:12 new invalid+5 unsubscribed,21 later-bounce projections,32 evidence audits,956 duplicate events skipped,162 unresolved reports kept private. Verified WAL-consistent SQLite/2-assets backup,exact simulation,independent287-row readback,integrity OK/FK0 and Gmail/closure replay no-op.119 tests,14 recipient+8 sync browser checks,compileall passed;own QA stopped. User declined8000 startup and3 updated/3 recovery events for17/18/28;no operational startup,SMTP send,new campaign,Gmail change,migration or deploy. Ready for manual standard launcher with fresh recovery confirmation. Context Pack Closeout complete;one task entry;authorized task-only commit/push to origin/main excludes earlier local edits and all private inputs/backups. See docs/campaign41-offline-2026-10-17.md.
+
+- 2026-10-18 10:01:13 CEST — `BHM-GMAIL-DOUBLECHECK-2026-10-18`: One-shot offline Gmail double-check after actual campaign42 completion;1980 unique candidate messages,38 search pages,no lower date cutoff,full MIME/4 RAW,final rescan0 new. Existing deterministic parser matched accepted campaigns36/37/38/40/41/42. Applied5 invalid+3 unsubscribed,5 later hard-bounce projections and17 evidence audits;contacts now4528 active/1119 invalid/29 unsubscribed. Skipped1619 prior IMAP/Gmail reports+1 in-batch duplicate;196 delayed/89 policy/224 unresolved reports retained without disabling contacts;two new policy reports also left send status unchanged. Consistent SQLite/WAL+2-assets backup,exact copied simulation,independent all-row readback,integrity OK/FK0 and six-campaign replay no-op passed. All last_sent_at,SMTP acceptance/attempts,snapshots,campaign/execution rows preserved;1148 inactive contacts excluded.119 isolated tests and compileall PASS.8000 and SMTP/IMAP stopped before and after;no startup,recovery,migration,send,campaign creation/closure/resume or Gmail modification. Context Pack Closeout:AGENTS/README reviewed unchanged,one task register/one appended entry,aggregate public report only. Git:validated task-only docs for authorized origin/main commit/push;final remote SHA/receipt recorded separately after publication,prior local changes excluded;no deploy. See docs/gmail-doublecheck-2026-10-18.md.
