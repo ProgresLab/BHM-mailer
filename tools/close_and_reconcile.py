@@ -29,6 +29,13 @@ def reconcile(conn,messages,timestamp,expected=None):
     for cid in cids:
         proposal=rec.plan(conn,cid,messages,paused_history=True)
         proposal['contacts']=[c for c in proposal['contacts'] if c['new_status'] in {'invalid','unsubscribed'}]
+        # Sender policy and temporary/delayed reports never project a bounce.
+        for e in proposal['events']:
+            if e['kind'] in {'sender_policy','delayed'} or e['kind'].startswith('review'):
+                e['bounce']=False
+        allowed={e['key'] for e in proposal['events'] if e['bounce'] and
+                 (e['kind'].startswith('invalid_') or e['kind']=='hard_bounce')}
+        proposal['sends']=[s for s in proposal['sends'] if s['evidence_key'] in allowed]
         if expected is not None and (len(plans)>=len(expected) or proposal!=expected[len(plans)]):
             raise ValueError('Gmail proposal changed after simulation')
         before=snapshot(conn)
@@ -50,6 +57,8 @@ def main():
     p.add_argument('--database',type=Path,required=True)
     p.add_argument('--campaign',type=int,required=True)
     p.add_argument('--expected-pending',type=int,required=True)
+    p.add_argument('--expected-refused',type=int,default=0,
+        help='Exact count of deferred rows with complete definite 4xx refusal history; terminal smtp_failed, never cancelled.')
     p.add_argument('--input',type=Path,nargs='+',required=True)
     p.add_argument('--manifest',type=Path,required=True)
     a=p.parse_args()
@@ -76,7 +85,7 @@ def main():
                 conn.execute('BEGIN IMMEDIATE')
                 plans=reconcile(conn,messages,timestamp)
                 before_close=snapshot(conn)
-                proposal=closure.plan(conn,a.campaign,a.expected_pending)
+                proposal=closure.plan(conn,a.campaign,a.expected_pending,a.expected_refused)
                 closure.apply(conn,proposal,timestamp)
                 delta=closure.validate_delta(before_close,snapshot(conn),proposal)
                 checks(conn)
@@ -96,7 +105,7 @@ def main():
                 contact_changes=sum(len(p['contacts']) for p in plans),closure_delta=delta,backup=str(backup))))
         else:
             m=json.loads(a.manifest.read_text(encoding='utf-8'))
-            if m['phase']!='simulated' or m['database']!=str(a.database.resolve()) or m['inputs']!=inputs or m['assets']!=assets() or m['closure']['campaign_id']!=a.campaign or len(m['closure']['pending_ids'])!=a.expected_pending:
+            if m['phase']!='simulated' or m['database']!=str(a.database.resolve()) or m['inputs']!=inputs or m['assets']!=assets() or m['closure']['campaign_id']!=a.campaign or len(m['closure']['pending_ids'])!=a.expected_pending or len(m['closure'].get('refused_ids',[]))!=a.expected_refused:
                 raise ValueError('Manifest/scope/input/assets changed')
             backup=Path(m['backup'])
             if digest(backup)!=m['sha256']:raise ValueError('Backup changed')

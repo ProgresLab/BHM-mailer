@@ -1,8 +1,8 @@
 """Explicit local IMAP+SMTP mode. Bind before imports; never start a queue.
 
-Startup is checked on an in-memory SQLite backup. Only previously interrupted,
-manually paused queues may receive the existing recovery timestamp/audit writes,
-and those require an explicit operator acknowledgement. No secret is logged.
+Startup is checked on an in-memory SQLite backup. Already safely paused queues
+require no recovery writes or acknowledgement. Material recovery still requires
+an exact operator acknowledgement. No secret is logged.
 """
 import argparse
 from contextlib import closing, contextmanager
@@ -129,6 +129,8 @@ def main(argv=None):
     except OSError:
         listener.close()
         print('Port 8000 zajety. Bez drugiej instancji, migracji lub recovery.', file=sys.stderr)
+        from tools.process_owner import port_owner
+        print(json.dumps(port_owner(8000),ensure_ascii=True),file=sys.stderr)
         return 1
     try:
         from app import db, imap_sync, mailer, worker

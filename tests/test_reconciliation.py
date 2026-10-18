@@ -74,6 +74,24 @@ class ReconciliationCase(unittest.TestCase):
         self.assertEqual(rec.classify('failed','5.4.1','smtp; 550 access denied'),('review_microsoft_5.4.1',None))
         self.assertEqual(rec.classify('failed','5.4.1','smtp; 550 5.4.1 Recipient address rejected: Access denied. https://aka.ms/EXOSmtpErrors [MX.prod.outlook.com 2026-10-16]'),('invalid_mailbox_microsoft','invalid'))
 
+    def test_connector_null_headers_fail_closed_and_do_not_abort_scan(self):
+        self.completed()
+        msg=self.dsn()
+        msg['payload']['parts'][0]['headers']=None
+        p=self.propose([msg])
+        self.assertEqual(p['contacts'][0]['new_status'],'invalid')
+        msg['payload']['headers']=None
+        self.assertEqual(self.propose([msg])['contacts'],[])
+
+    def test_closure_import_keeps_sender_policy_review_only(self):
+        from tools.close_and_reconcile import reconcile
+        self.completed()
+        with db.get_connection() as c:
+            plans=reconcile(c,[self.dsn('5.7.1','failed','smtp; 550 sender policy')],db.utc_now())
+            self.assertFalse(plans[0]['contacts']);self.assertFalse(plans[0]['sends'])
+            self.assertFalse(plans[0]['events'][0]['bounce'])
+            self.assertEqual(c.execute('SELECT status FROM email_sends').fetchone()[0],'accepted_by_smtp')
+
     def test_unsubscribe_priority_and_no_notification_send(self):
         self.completed();p=self.propose([self.unsubscribe(),self.dsn()]);self.apply(p)
         evidence=next(e for e in p['events'] if e['key']==p['contacts'][0]['evidence_key'])

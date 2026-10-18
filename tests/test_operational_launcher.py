@@ -33,10 +33,18 @@ class OperationalCase(unittest.TestCase):
                 conn.execute('''INSERT INTO campaign_execution(campaign_id,state,mode,manual_pause,started,updated,problem)
                     VALUES(?,'interrupted','smtp',1,1,1,?)''',(cid,'Proces został przerwany. Wymagana kontrola kolejki i jawne wznowienie.'))
 
-    def test_exact_recovery_on_copy_and_idle_engine_never_sends(self):
+    def test_three_restarts_are_noop_without_prompt_or_send(self):
         self.paused_legacy()
         before = self.snapshot()
-        self.assertEqual(launcher.startup_preflight(db, worker, self.clock()), [17,18,28])
+        import uvicorn
+        for _ in range(3):
+            self.assertEqual(launcher.startup_preflight(db, worker, self.clock()), [])
+            with patch.object(launcher,'configure'),patch.object(launcher.socket,'socket'),patch.object(launcher,'configuration_ok',return_value=True),patch.object(launcher,'ROOT',self.test_root),patch('builtins.input',side_effect=AssertionError('Unexpected RECOVERY prompt')),patch.object(uvicorn,'Server') as server:
+                # Model the actual lifespan recovery, on this synthetic DB only.
+                server.return_value.run.side_effect=lambda **kw:worker.recover(self.clock())
+                self.assertEqual(launcher.main([]),0)
+            self.clock.advance(60)
+            self.assertEqual(self.snapshot(),before)
         self.assertEqual(self.snapshot(), before)
         sender = Mock()
         worker.Engine(self.clock, sender, fixtures.settings).tick()
@@ -46,11 +54,12 @@ class OperationalCase(unittest.TestCase):
     def test_no_recovery_for_clean_database(self):
         self.assertEqual(launcher.startup_preflight(db, worker, self.clock()), [])
 
-    def test_reserved_manual_pause_needs_exact_recovery_without_resuming(self):
+    def test_reserved_manual_pause_is_noop_without_resuming(self):
         cid,_=self.prepare(2)
         worker.pause(cid,self.clock())
         before=self.snapshot()
-        self.assertEqual(launcher.startup_preflight(db,worker,self.clock()+1),[cid])
+        self.assertEqual(launcher.startup_preflight(db,worker,self.clock()+1),[])
+        worker.recover(self.clock()+1)
         self.assertEqual(self.snapshot(),before)
         self.assertEqual(self.row('SELECT campaign_id FROM smtp_control')['campaign_id'],cid)
         self.assertEqual(self.row('SELECT state FROM campaign_execution')['state'],'manual_paused')
@@ -105,20 +114,23 @@ class OperationalCase(unittest.TestCase):
                 with self.subTest(field=field),patch.object(mailer,'get_mail_settings',return_value=replace(config,**{field:value})):
                     self.assertFalse(launcher.configuration_ok(mailer,imap_sync))
 
-    def test_headless_no_approval_preserves_database_and_never_loads_uvicorn(self):
-        self.paused_legacy()
+    def test_uncertain_startup_blocks_without_mutation(self):
+        cid,_=self.prepare(1)
+        worker.pause(cid,self.clock())
+        with db.get_connection() as c:
+            c.execute("UPDATE email_sends SET status='sending',attempt_count=1")
         before = self.snapshot()
         with patch.object(launcher,'configure'),patch.object(launcher.socket,'socket'),patch.object(launcher,'configuration_ok',return_value=True),patch.object(launcher.sys.stdin,'isatty',return_value=False):
             self.assertEqual(launcher.main([]),1)
         self.assertEqual(self.snapshot(),before)
 
-    def test_explicit_approval_uses_one_server_and_prebound_socket(self):
+    def test_plain_start_uses_one_server_and_prebound_socket(self):
         self.paused_legacy()
         before = self.snapshot()
         import uvicorn
         sock = Mock()
         with patch.object(launcher,'configure'),patch.object(launcher.socket,'socket',return_value=sock),patch.object(launcher,'configuration_ok',return_value=True),patch.object(launcher,'ROOT',self.test_root),patch.object(uvicorn,'Server') as server:
-            self.assertEqual(launcher.main(['--approve-recovery-for','17','18','28']),0)
+            self.assertEqual(launcher.main([]),0)
             self.assertEqual(server.call_args.args[0].workers,1)
             self.assertFalse(server.call_args.args[0].reload)
             server.return_value.run.assert_called_once_with(sockets=[sock])

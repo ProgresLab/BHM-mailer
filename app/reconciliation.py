@@ -28,7 +28,7 @@ def walk(part):
 
 
 def headers(part, name):
-    return [h['value'] for h in part.get('headers', []) if h['name'].lower() == name.lower()]
+    return [h['value'] for h in part.get('headers') or [] if h['name'].lower() == name.lower()]
 
 
 def header(part, name):

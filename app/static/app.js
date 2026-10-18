@@ -434,10 +434,12 @@ function initMonitor() {
       set('next_break',done?'—':d.cooldown_seconds?`Trwa przerwa: ${duration(d.cooldown_seconds)}`:duration(d.next_break_seconds));
       set('progress',d.percent+'%'); root.querySelector('[data-monitor-progress]').style.width=d.percent+'%';
       set('notice',done ? (d.problem || 'Kolejka rozliczona. Błędy i niepewne próby sprawdź w historii.') : d.manual_pause ? (d.current_email?'Pauza zlecona — trwa kończenie rozpoczętej próby.':'Kampania oczekuje na ręczne wznowienie.') : d.execution_state==='auto_cooldown'?`${d.problem} Najwcześniejsza bezpieczna próba ${new Date(d.resume_at).toLocaleTimeString('pl-PL',{timeZone:'Europe/Warsaw'})}, za ${duration(d.smtp_cooldown_seconds)}. ${d.failure_detail}`:d.execution_state==='auto_break'?`Automatyczna przerwa 5 minut — wznowienie za ${duration(d.cooldown_seconds)}.`:d.problem || 'Kolejka pracuje w tle.');
+      set('failure_detail',!done ? d.failure_detail || '' : '');
+      set('resume_after',!done && d.resume_at ? `Najwcześniejsza kontrola / próba: ${new Date(d.resume_at).toLocaleString('pl-PL',{timeZone:'Europe/Warsaw'})}. To nie potwierdza odblokowania przez dostawcę.` : '');
       set('quality_warning',d.quality_warning || '');
       root.querySelector('[data-monitor="quality_warning"]').hidden=!d.quality_warning;
       root.querySelector('[data-control="pause"]').disabled=done || d.manual_pause;
-      root.querySelector('[data-control="resume"]').disabled=done || (!d.manual_pause&&!['problem','interrupted'].includes(d.execution_state));
+      root.querySelector('[data-control="resume"]').disabled=done || (d.resume_at && new Date(d.resume_at)>new Date()) || (!d.manual_pause&&!['problem','interrupted'].includes(d.execution_state));
       root.querySelector('[data-monitor-events]').innerHTML=d.recent_events.map(e=>`<li><time>${escapeHtml(new Date(e.created*1000).toLocaleTimeString('pl-PL'))}</time> ${escapeHtml(e.message)}</li>`).join('');
     } catch {set('notice','Brak połączenia z aplikacją. Status może być nieaktualny.');}
   }

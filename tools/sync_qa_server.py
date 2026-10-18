@@ -55,6 +55,13 @@ def seed_iteration():
             c.execute('''INSERT INTO email_sends(campaign_id,contact_id,email,language,subject,html_snapshot,text_snapshot,status,created_at,outcome_uncertain)
                 SELECT 36,id,email,'pl','QA','<p>QA</p>','QA','delivery_unknown',?,1 FROM contacts WHERE id=3''',(db.utc_now(),))
         c.execute("UPDATE campaigns SET status='completed_with_errors' WHERE id=36")
+        c.execute('''INSERT OR IGNORE INTO campaigns(id,name,subject,language,body,html,text,status,created_at)
+            VALUES(37,'QA R7','QA','pl','QA','<p>QA</p>','QA','approved',?)''',(db.utc_now(),))
+        c.execute('''INSERT OR REPLACE INTO campaign_execution(campaign_id,state,mode,started,updated,problem,failure_kind)
+            VALUES(37,'problem','smtp',?,?,?,?)''',(now,now,
+            'Provider R7: ponad 30 wiadomości w kolejce one.com. Minimum 60 minut bez prób; potem kontrola operatora. Odblokowanie nie jest gwarantowane.',
+            'SMTPDataError: 451 4.7.1 [R7] You have more than 30 messages in queue, try later'))
+        c.execute('UPDATE smtp_control SET blocked_until=? WHERE id=1',(now+3600,))
 
 
 if __name__=='__main__':

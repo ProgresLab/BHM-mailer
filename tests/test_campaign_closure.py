@@ -74,6 +74,42 @@ class Case(unittest.TestCase):
             self.assertEqual(snapshot(c)['send_attempt_history'],closed['send_attempt_history'])
             self.assertFalse(rec.plan(c,cid,[self.dsn()],paused_history=True)['contacts'])
 
+    def test_close_definite_r7_refusal_preserves_attempt_and_unsent_dates(self):
+        cid,ids=self.prepare(3)
+        self.engine.tick();self.clock.advance(20)
+        def refused(*a,**kw):
+            raise smtplib.SMTPDataError(451,b'4.7.1 [R7] You have more than 30 messages in queue, try later')
+        self.engine.sender=refused;self.engine.tick()
+        with db.get_connection() as c:
+            before=snapshot(c)
+            with self.assertRaises(ValueError):close.plan(c,cid,1)
+            p=close.plan(c,cid,1,1)
+            close.apply(c,p,worker.stamp(self.clock()))
+            close.validate_delta(before,snapshot(c),p)
+            self.assertEqual(snapshot(c)['send_attempt_history'],before['send_attempt_history'])
+            self.assertEqual(snapshot(c)['contacts'],before['contacts'])
+            failed=c.execute("SELECT * FROM email_sends WHERE status='smtp_failed'").fetchone()
+            self.assertIsNone(failed['accepted_at']);self.assertIsNone(failed['sent_at'])
+            self.assertIn('[R7]',failed['last_error'])
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM email_sends WHERE accepted_at IS NOT NULL").fetchone()[0],1)
+            after=snapshot(c)
+            self.assertFalse(close.apply(c,p,worker.stamp(self.clock())))
+            self.assertEqual(snapshot(c),after)
+        with self.assertRaises(ValueError):worker.resume(cid,self.clock()+3601)
+        self.engine.tick();self.assertEqual(len(self.starts),1)
+
+    def test_refusal_closure_rejects_unknown_unfinished_or_conflicting_history(self):
+        cid,_=self.prepare(2)
+        def refused(*a,**kw):raise smtplib.SMTPDataError(451,b'4.7.1 [R7] queue')
+        self.engine.sender=refused;self.engine.tick()
+        with db.get_connection() as c:
+            for column,value in [('status','delivery_unknown'),('finished',None),('smtp_code','250')]:
+                with self.subTest(column=column):
+                    c.execute('SAVEPOINT bad')
+                    c.execute('UPDATE send_attempt_history SET '+column+'=?',(value,))
+                    with self.assertRaises(ValueError):close.plan(c,cid,1,1)
+                    c.execute('ROLLBACK TO bad');c.execute('RELEASE bad')
+
     def test_1000_temporary_failures_continue_without_manual_resume(self):
         cid,_=self.prepare(1000);calls={};starts=[]
         def sender(*a,**kw):

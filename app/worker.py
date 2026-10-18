@@ -108,6 +108,9 @@ def recover(now=None):
     now = time.time() if now is None else now
     with db.get_connection() as conn:
         conn.execute('BEGIN IMMEDIATE')
+        interrupted_attempts={r[0] for r in conn.execute('''SELECT DISTINCT s.campaign_id
+            FROM email_sends s LEFT JOIN send_attempt_history a ON a.send_id=s.id
+            WHERE s.status='sending' OR a.status='sending' ''')}
         conn.execute("UPDATE unsubscribe_events SET notification_status='uncertain' WHERE notification_status='sending'")
         conn.execute("""UPDATE send_attempt_history SET status='delivery_unknown',recovered_at=?,
                         detail='Proces przerwany podczas próby; wynik nieznany.' WHERE status='sending'""",(now,))
@@ -119,6 +122,12 @@ def recover(now=None):
             conn.execute("""UPDATE email_sends SET status='delivery_unknown', outcome_uncertain=1,
                             last_error='Proces przerwany podczas próby. Sprawdź Message Trace; bez automatycznej ponownej próby.'
                             WHERE campaign_id=? AND status='sending'""", (cid,))
+            execution=conn.execute('SELECT * FROM campaign_execution WHERE campaign_id=?',(cid,)).fetchone()
+            if execution['state'] in {'completed','completed_with_errors'}:
+                continue
+            if (execution['state'] in {'interrupted','manual_paused'} and execution['manual_pause']
+                    and cid not in interrupted_attempts):
+                continue  # Already safe: no timestamp churn, audit spam or resume.
             conn.execute("""UPDATE campaign_execution SET state='interrupted',manual_pause=1,updated=?,
                             problem='Proces został przerwany. Wymagana kontrola kolejki i jawne wznowienie.'
                             WHERE campaign_id=? AND state NOT IN ('completed','completed_with_errors')""", (now, cid))
@@ -347,6 +356,9 @@ class Engine:
                 # Only explicit SMTP negative replies prove non-acceptance. A transport
                 # timeout/disconnect may follow DATA acceptance and is never retried.
                 code,definite,temporary,safe,wait = temporary_policy(failure,error)
+                r7 = definite and temporary and bool(re.search(r'\[R7\]',error,re.I))
+                if r7:
+                    wait=max(wait,3600)  # Conservative local floor, not provider availability proof.
                 enhanced = re.search(r'\b5\.\d+\.\d+\b',error)
                 kind,target = reconciliation.classify('failed',enhanced[0] if enhanced else '',error)
                 recipient_reply = ((isinstance(failure,smtplib.SMTPRecipientsRefused) and len(failure.recipients)==1) or
@@ -378,7 +390,8 @@ class Engine:
                     uncertain = not definite and isinstance(failure,(TimeoutError,ConnectionError,smtplib.SMTPServerDisconnected)) and not isinstance(failure,ssl.SSLError)
                     unknowns = conn.execute('''SELECT status FROM send_attempt_history WHERE mode='smtp' ORDER BY id DESC LIMIT 3''').fetchall()
                     uncertain_continue = uncertain and not (len(unknowns)>=3 and all(a[0]=='delivery_unknown' for a in unknowns[1:]))
-                    message = ('Provider R6: oczekiwanie minimum 60 minut; potem jedna ograniczona próba, bez gwarancji odblokowania.' if r6 and auto else
+                    message = ('Provider R7: ponad 30 wiadomości w kolejce one.com. Minimum 60 minut bez prób; potem kontrola operatora. Odblokowanie nie jest gwarantowane.' if r7 else
+                               'Provider R6: oczekiwanie minimum 60 minut; potem jedna ograniczona próba, bez gwarancji odblokowania.' if r6 and auto else
                                'Provider R6 nadal blokuje konto. Wymagana kontrola dostawcy/operatora.' if r6 else
                                'Limit prób tego odbiorcy; niewysłany. Kontynuacja pozostałych adresów.' if recipient_exhausted else
                                'Niepewna próba odłożona do weryfikacji; bez ponowienia. Kontynuacja innych adresów.' if uncertain_continue else
@@ -391,7 +404,7 @@ class Engine:
                     state='manual_paused' if current['manual_pause'] else 'auto_cooldown' if auto else 'running' if recipient_exhausted or uncertain_continue else 'problem'
                     conn.execute('''UPDATE campaign_execution SET state=?,problem=?,smtp_cooldown_until=?,
                         auto_resume_count=auto_resume_count+?,failure_kind=? WHERE campaign_id=?''',
-                        (state,message,end+wait if auto else 0,int(auto),str(code or '')+' '+error,cid))
+                        (state,message,end+wait if auto else 0,int(auto),type(failure).__name__+': '+error,cid))
                     if auto or state=='problem':
                         conn.execute('UPDATE smtp_control SET blocked_until=MAX(blocked_until,?) WHERE id=1', (end + (wait if temporary else 300),))
                     event(conn, cid, end, message)
@@ -486,7 +499,7 @@ def execution_payload(campaign_id, now=None):
                 elapsed_seconds=round(max(0,(row['updated'] if finished else now)-row['started'])), active_seconds=round(active),
                 cooldown_seconds=math.ceil(cooldown), next_attempt_seconds=math.ceil(until_next),
                 smtp_cooldown_seconds=math.ceil(smtp_cooldown),
-                resume_at=stamp(max(row['smtp_cooldown_until'],control['blocked_until'])) if row['smtp_cooldown_until'] else None,
+                resume_at=stamp(max(row['smtp_cooldown_until'],control['blocked_until'])) if not finished and max(row['smtp_cooldown_until'],control['blocked_until'])>now else None,
                 failure_detail=row['failure_kind'], auto_resume_count=row['auto_resume_count'],
                 next_break_seconds=max(0,math.ceil(ACTIVE_PERIOD-cycle)),
                 eta_seconds=None if eta_uncertain else round(eta), eta_uncertain=eta_uncertain,

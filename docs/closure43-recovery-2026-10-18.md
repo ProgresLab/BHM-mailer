@@ -1,0 +1,35 @@
+# Campaign43 closure, Gmail reconciliation and startup repair
+
+Task: `BHM-CLOSE43-RECOVERY-2026-10-18`. Result: DONE. Source repository: ProgresLab/BHM-mailer, main. Remote baseline e0efc19cb2add3a49839939e77ada4dd3cdb8aee verified live. Runtime is local; no deployment.
+
+## Operational outcome
+
+SQLite identified43 as the unfinished campaign. No listener on8000, in-flight SMTP attempt or active IMAP scan existed at entry. Its1000 rows comprised914 accepted (365 already bounced later),85 unattempted pending and1 deferred after an explicit negative SMTP reply. No unknown outcomes existed. The918 attempts included914 acceptances and4 rate-limited refusals;three previously refused messages had subsequently been accepted.
+
+After stopped-runtime fencing, SQLite backup API (including committed WAL), hash-verified copies of both immutable assets and exact copied simulation, closure cancelled85 unattempted rows and finalized the single verified deferred row as smtp_failed. This extension requires an explicit count and complete finished4xx refusal ledger, with no acceptance/uncertainty. It preserves every original attempt and reply. Campaign/execution are completed_with_errors, the reservation is released and terminal resume is rejected. No send/accept/contact last-send date or snapshot changed. The86 unsent contacts remain stored and eligible subject to their independent status/history.
+
+Gmail acquisition used four full-history in:anywhere searches,52 exhausted pages and2505 unique full MIME messages, with6 RAW fallbacks. A final three-query head rescan found no new IDs. Existing deterministic matching covered accepted campaigns36/37/38/40/41/42/43, requiring authenticated source, exact Message-ID/recipient/time and unsubscribe identity/token/snapshot evidence. The import applied3 invalid,5 unsubscribed,3 hard-bounce projections and15 evidence audits.2140 duplicate report records were skipped;278 unresolved,104 sender-policy and260 delayed records did not alter contact status. Unsubscribe priority and shared IMAP/Gmail deduplication remain. Nullable connector MIME headers now safely parse as absent; missing authentication still fails closed.
+
+Final43:914 historical acceptances =546 accepted_by_smtp+368 bounced_later;85 cancelled;1 smtp_failed;0 pending/sending/unknown. Dashboard369 errors includes368 later bounces and1 refusal, overlapping the914 acceptance history. Contacts:4155 active,1487 invalid,34 unsubscribed. Gmail was read-only; full evidence remains private under ignored output/backups.
+
+## SMTP findings and repair
+
+All four interruptions were explicit `451 4.7.1 [R7] You have more than 30 messages in queue, try later`. one.com was refusing additional messages because its outgoing queue was saturated. The evidence does not identify why that remote queue remained full or prove when it drained. It was not an SMTP login failure, R6, an application list-failure threshold or exhausted auto-resume budget (counter0).
+
+Historical ledger timestamps show at least the900-second account cooldown was respected before manual resumes. Subsequent acceptances occurred, followed by the same R7 refusal: manual resume does not clear the provider queue. The former application defect was generic diagnostics that concealed this reason and omitted the manual-problem cooldown deadline. Historic records do not retain the Python exception class, so it cannot be recovered reliably; no type was invented or backfilled. New failures retain the class in failure diagnostics, tested using fake SMTPDataError.
+
+R7 now stops for operator/provider review with a conservative local minimum3600-second cooldown, honoring longer explicit waits, without an automatic probe. The monitor shows exact sanitized reply and earliest control time even in problem state; it never promises remote availability. Resume before the deadline remains blocked server-side.20-second pacing,1800 active/300 break, safe temporary900-second minimum, bounded R6 probe, account/auth/TLS/reputation stops and uncertainty protection remain. Historical bounce counts remain advisory, never an independent hard block.
+
+## Startup and acceptance
+
+worker.recover preserves already safe interrupted/manual_paused executions, including updated timestamps, problem text and audit history. It only writes real interruption/outcome changes and never resumes a queue. The launcher still runs init/recover on an in-memory backup, rejects migrations, uncertain/in-flight work, pending admin notifications, cooldown, missing assets and inconsistent identity. Ordinary startup with no material delta requires no RECOVERY text/arguments. Obsolete approval flags are not silently accepted. Duplicate startup reports PID/CWD/owner when OS access permits and exits before loading the application.
+
+126 isolated tests passed with fake SMTP/IMAP. They include partial closure with a definite R7 refusal, exact history/date preservation, invalid/unsubscribe/delayed/duplicate/reimport handling, three ordinary startup/recovery cycles without input or database changes, terminal campaigns, true crash uncertainty, cooldown and existing recipient/filter/1000-limit regressions. Compileall passed.14 recipient browser scenarios and9 sync/diagnostic scenarios passed, including R7 SQLite→API→reload→mobile screen. The existing versioned JS cache contract is preserved.
+
+Actual127.0.0.1:8000 PID24896 started through the operational helper without approval arguments, with recovery_ids=[], IMAP ON/SMTP ON. Independent comparison to the startup backup found only IMAP scheduling updates: no SMTP/admin attempt, recovery timestamp/event, campaign, selection or account-control changes. Duplicate launch exited1 and reported the same PID, canonical CWD and process owner. Ten GET/HEAD-only browser checks passed on actual8000: closed43 monitor, editor, contacts/history, empty existing approved39 selection,500/page, current served JS, dry-run default and unchecked SMTP acknowledgement. Desktop/mobile screenshots were inspected; no new campaign or real send was performed. QA8018/8019 were stopped; one operational instance remains.
+
+Independent committed readback matches every simulated table and schema, integrity is ok, foreign-key errors0, and Gmail/closure replay is a no-op. Backups, MIME, contact-level plans, private logs and screenshots remain ignored. Existing local documentation edits are preserved outside the task commit. AGENTS/README/brief are reconciled, one task register and exactly one dated Change Log entry added. Commit/push receipt is recorded privately after live remote verification.
+
+## Remaining limits
+
+Provider queue recovery cannot be verified without a separately approved real send; none was attempted. Historical exception classes were not stored. Automatic marketing IMAP still does not cover all info-mailbox unsubscribe notifications; the authorized full Gmail scan supplied that coverage for this task. Unresolved/policy evidence remains private and review-only. Startup has no Windows service/task; use start-bhm-operational.bat after shutdown.
