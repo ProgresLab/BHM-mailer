@@ -12,7 +12,7 @@ from . import reconciliation as rec
 PREFIX='operator-close-v1:'
 
 
-def plan(conn, campaign_id, expected_pending, expected_refused=0):
+def plan(conn, campaign_id, expected_pending, expected_refused=0, expected_preserved_refused=0):
     rec.ensure_paused_history(conn,campaign_id)
     campaign=dict(conn.execute('SELECT * FROM campaigns WHERE id=?',(campaign_id,)).fetchone())
     execution=dict(conn.execute('SELECT * FROM campaign_execution WHERE campaign_id=?',(campaign_id,)).fetchone())
@@ -26,12 +26,21 @@ def plan(conn, campaign_id, expected_pending, expected_refused=0):
     refused=[r for r in rows if r['status']=='rate_limited']
     if len(pending)!=expected_pending or expected_pending<1:
         raise ValueError('Pending count differs from exact operator approval')
-    if len(refused)!=expected_refused or expected_refused<0:
+    if (len(refused)!=expected_refused+expected_preserved_refused or expected_refused<0
+            or expected_preserved_refused<0 or (expected_refused and expected_preserved_refused)):
         raise ValueError('Refused count differs from exact operator approval')
     if any(r['status'] in {'sending','delivery_unknown'} or r['outcome_uncertain'] for r in rows):
         raise ValueError('In-flight, deferred or uncertain rows require a separate decision')
     for row in refused:
         attempts=conn.execute('SELECT * FROM send_attempt_history WHERE send_id=? ORDER BY id',(row['id'],)).fetchall()
+        if expected_preserved_refused:
+            # Legacy rows lack the immutable attempt ledger. Closure may leave
+            # them byte-for-byte unchanged; never infer a final SMTP outcome.
+            if (row['accepted_at'] or row['sent_at'] or attempts
+                    or not str(row['smtp_code']).isdigit()
+                    or not 400<=int(row['smtp_code'])<500):
+                raise ValueError('Only legacy unaccepted 4xx rows without a ledger may be preserved')
+            continue
         if (row['accepted_at'] or row['sent_at'] or not attempts or row['attempt_count']!=len(attempts)
                 or any(a['mode']!='smtp' or a['status']!='rate_limited' or a['finished'] is None
                     or not str(a['smtp_code']).isdigit() or not 400<=int(a['smtp_code'])<500 for a in attempts)
@@ -44,7 +53,9 @@ def plan(conn, campaign_id, expected_pending, expected_refused=0):
     result=dict(campaign_id=campaign_id,campaign=campaign,execution=execution,control=control,
         pending_ids=[r['id'] for r in pending],total=len(rows),
         accepted=sum(bool(r['accepted_at']) for r in rows))
-    if refused:
+    if expected_preserved_refused:
+        result['preserved_refused_ids']=[r['id'] for r in refused]
+    elif refused:
         result['refused_ids']=[r['id'] for r in refused]
     result['key']=hashlib.sha256(json.dumps(result,sort_keys=True).encode()).hexdigest()
     return result
@@ -58,12 +69,15 @@ def apply(conn, proposal, timestamp):
         reason='Explicit operator authorization; never send remaining pending messages.')
     if proposal.get('refused_ids'):
         detail['refused_ids']=proposal['refused_ids']
+    if proposal.get('preserved_refused_ids'):
+        detail['preserved_refused_ids']=proposal['preserved_refused_ids']
     audit=PREFIX+json.dumps(detail,sort_keys=True)
     if conn.execute('SELECT 1 FROM execution_events WHERE campaign_id=? AND message=?',(cid,audit)).fetchone():
         row=conn.execute('SELECT state FROM campaign_execution WHERE campaign_id=?',(cid,)).fetchone()
         if row and row['state']=='completed_with_errors':return False
         raise ValueError('Closure audit conflicts with execution state')
-    if plan(conn,cid,len(proposal['pending_ids']),len(proposal.get('refused_ids',[])))!=proposal:
+    if plan(conn,cid,len(proposal['pending_ids']),len(proposal.get('refused_ids',[])),
+            len(proposal.get('preserved_refused_ids',[])))!=proposal:
         raise ValueError('Campaign changed after closure planning')
     for sid in proposal['pending_ids']:
         changed=conn.execute("""UPDATE email_sends SET status='cancelled',final_status_at=?,

@@ -110,6 +110,48 @@ class Case(unittest.TestCase):
                     with self.assertRaises(ValueError):close.plan(c,cid,1,1)
                     c.execute('ROLLBACK TO bad');c.execute('RELEASE bad')
 
+    def test_explicit_legacy_refusal_preservation_closes_without_inventing_history(self):
+        cid,_=self.prepare(3)
+        with db.get_connection() as c:
+            sid=c.execute('SELECT MIN(id) FROM email_sends').fetchone()[0]
+            c.execute("UPDATE campaign_execution SET state='manual_paused',manual_pause=1")
+            c.execute("UPDATE email_sends SET status='rate_limited',attempt_count=1,smtp_code='451',last_error='Legacy 451 refusal; no immutable ledger' WHERE id=?",(sid,))
+            before=snapshot(c)
+            with self.assertRaises(ValueError):close.plan(c,cid,2,1)
+            with self.assertRaises(ValueError):close.plan(c,cid,2,0,2)
+            p=close.plan(c,cid,2,0,1)
+            self.assertEqual(p['preserved_refused_ids'],[sid])
+            close.apply(c,p,worker.stamp(self.clock()))
+            close.validate_delta(before,snapshot(c),p)
+            after=snapshot(c)
+            self.assertEqual(next(r for r in after['email_sends'] if r['id']==sid),
+                             next(r for r in before['email_sends'] if r['id']==sid))
+            self.assertEqual(after['contacts'],before['contacts'])
+            self.assertEqual(after['send_attempt_history'],before['send_attempt_history'])
+            self.assertFalse(close.apply(c,p,worker.stamp(self.clock())))
+            self.assertEqual(snapshot(c),after)
+        with self.assertRaises(ValueError):worker.resume(cid,self.clock())
+        self.engine.tick();self.assertFalse(self.starts)
+
+    def test_preserved_refusal_rejects_ledger_acceptance_unknown_and_non4xx(self):
+        cid,_=self.prepare(2)
+        with db.get_connection() as c:
+            sid=c.execute('SELECT MIN(id) FROM email_sends').fetchone()[0]
+            c.execute("UPDATE campaign_execution SET state='manual_paused',manual_pause=1")
+            c.execute("UPDATE email_sends SET status='rate_limited',attempt_count=1,smtp_code='451' WHERE id=?",(sid,))
+            for column,value in [('accepted_at','2020-01-01'),('sent_at','2020-01-01'),
+                                 ('outcome_uncertain',1),('smtp_code','250'),('smtp_code','unknown')]:
+                with self.subTest(column=column):
+                    c.execute('SAVEPOINT bad')
+                    c.execute('UPDATE email_sends SET '+column+'=? WHERE id=?',(value,sid))
+                    with self.assertRaises(ValueError):close.plan(c,cid,1,0,1)
+                    c.execute('ROLLBACK TO bad');c.execute('RELEASE bad')
+            c.execute("INSERT INTO send_attempt_history(send_id,attempt_number,mode,started,finished,status,smtp_code,message_id) VALUES(?,1,'smtp',?,?,'rate_limited','451','<legacy-test@example.test>')",(sid,self.clock()-1,self.clock()))
+            with self.assertRaises(ValueError):close.plan(c,cid,1,0,1)
+            # Complete definite history still uses the pre-existing refusal path.
+            close.plan(c,cid,1,1)
+            with self.assertRaises(ValueError):close.plan(c,cid,1,1,1)
+
     def test_1000_temporary_failures_continue_without_manual_resume(self):
         cid,_=self.prepare(1000);calls={};starts=[]
         def sender(*a,**kw):

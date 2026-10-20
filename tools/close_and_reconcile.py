@@ -59,6 +59,8 @@ def main():
     p.add_argument('--expected-pending',type=int,required=True)
     p.add_argument('--expected-refused',type=int,default=0,
         help='Exact count of deferred rows with complete definite 4xx refusal history; terminal smtp_failed, never cancelled.')
+    p.add_argument('--expected-preserved-refused',type=int,default=0,
+        help='Exact count of legacy unaccepted 4xx rows without attempt ledgers; preserve every field while closing the campaign.')
     p.add_argument('--input',type=Path,nargs='+',required=True)
     p.add_argument('--manifest',type=Path,required=True)
     a=p.parse_args()
@@ -85,7 +87,7 @@ def main():
                 conn.execute('BEGIN IMMEDIATE')
                 plans=reconcile(conn,messages,timestamp)
                 before_close=snapshot(conn)
-                proposal=closure.plan(conn,a.campaign,a.expected_pending,a.expected_refused)
+                proposal=closure.plan(conn,a.campaign,a.expected_pending,a.expected_refused,a.expected_preserved_refused)
                 closure.apply(conn,proposal,timestamp)
                 delta=closure.validate_delta(before_close,snapshot(conn),proposal)
                 checks(conn)
@@ -105,7 +107,7 @@ def main():
                 contact_changes=sum(len(p['contacts']) for p in plans),closure_delta=delta,backup=str(backup))))
         else:
             m=json.loads(a.manifest.read_text(encoding='utf-8'))
-            if m['phase']!='simulated' or m['database']!=str(a.database.resolve()) or m['inputs']!=inputs or m['assets']!=assets() or m['closure']['campaign_id']!=a.campaign or len(m['closure']['pending_ids'])!=a.expected_pending or len(m['closure'].get('refused_ids',[]))!=a.expected_refused:
+            if m['phase']!='simulated' or m['database']!=str(a.database.resolve()) or m['inputs']!=inputs or m['assets']!=assets() or m['closure']['campaign_id']!=a.campaign or len(m['closure']['pending_ids'])!=a.expected_pending or len(m['closure'].get('refused_ids',[]))!=a.expected_refused or len(m['closure'].get('preserved_refused_ids',[]))!=a.expected_preserved_refused:
                 raise ValueError('Manifest/scope/input/assets changed')
             backup=Path(m['backup'])
             if digest(backup)!=m['sha256']:raise ValueError('Backup changed')

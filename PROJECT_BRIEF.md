@@ -1,6 +1,6 @@
 # PROJECT_BRIEF.md
 
-Last updated: 2026-10-18
+Last updated: 2026-10-20
 
 Status: in development
 
@@ -13,6 +13,8 @@ BHM Mailer / BHM Chemicals Mailing Tool
 Local mailing application for importing and managing BHM Chemicals contacts, preparing single-language campaigns, previewing email output, selecting recipients, sending in dry-run or configured SMTP mode, and reviewing campaign delivery/status history.
 
 ## Current Status
+
+Final Gmail reconciliation and previous queues closure (`BHM-GMAIL-FINAL-CLOSE-2026-10-20`): **DONE, offline**. Four fully paginated Gmail queries:2596 candidates/73 pages;2257 relevant complete MIME reports (2175 cached immutable IDs+82 freshly fetched),4 cached complete RAW fallbacks,1047 relevant messages since2026-10-18. Final2026-10-20 08:20:15 CEST rescan found0 new IDs. Applied1 invalid+11 unsubscribed,1 later-bounce projection and79 evidence audits;2163 duplicates skipped (1584 IMAP/579 Gmail). Final4140 active/1491 invalid/45 unsubscribed.313 delayed,105 policy and285 review records do not change contacts. User additionally authorized permanent closure of all previous queues:17/18/28/44 completed_with_errors,1864 unattempted pending cancelled,1 proven4xx refusal finalized as smtp_failed,2 legacy4xx rows preserved byte-for-byte. All executions terminal,reservation released. Four consistent SQLite/WAL+2-assets backups,exact simulations,chained independent full-row readback,integrityOK/FK0 and Gmail/closure no-op replay passed.128 isolated tests and compileall passed.8000/SMTP/IMAP stopped at entry and remain stopped;no send,new campaign,resume,recovery,migration or deploy. [Results and limitations](docs/gmail-final-2026-10-20.md). Older runtime statements below are historical.
 
 Campaign43 closure and startup repair (`BHM-CLOSE43-RECOVERY-2026-10-18`): **DONE**. Campaign/execution completed_with_errors;914 historical SMTP acceptances preserved (368 later bounces),85 unattempted rows cancelled,1 definite451/R7 refusal finalized as smtp_failed,0 pending/uncertain;reservation released and resume blocked. Gmail full-history scan2505 MIME/52 pages/6 RAW:3 invalid+5 unsubscribe,3 bounce projections,15 audits,2140 duplicate records;278 unresolved and104 sender-policy records remain review-only. SQLite/WAL+2-assets backups, exact copied simulation, independent full-row readback and replay passed;no false send/contact dates. Recovery now preserves safe interrupted/manual_paused queues without timestamps/events or RECOVERY prompt;126 isolated tests include3 successive startup/recovery cycles and uncertain-start protection. Actual127.0.0.1:8000 PID24896, IMAP ON/SMTP ON,10 GET-only browser checks plus14 recipient/9 sync browser scenarios passed;zero new SMTP/admin attempts and only ordinary IMAP scheduling changed at startup. Duplicate launch reports PID/CWD/owner and exits;own QA stopped. No real send,new campaign,migration,secrets/provider/DNS changes or deploy. [Acceptance](docs/closure43-recovery-2026-10-18.md). Older runtime/preflight statements below are historical.
 
@@ -135,6 +137,20 @@ Update this brief only when project scope, status, architecture, integrations, d
 
 
 ## Requirements & Acceptance
+
+Current task GF-01–GF-08: `BHM-GMAIL-FINAL-CLOSE-2026-10-20`.
+
+| ID / Requirement | Evidence and result | Status |
+| --- | --- | --- |
+| GF-01 source/runtime | canonical root/main/origin;local and fresh remote f17890e;8000 and SMTP/IMAP locks free;actual queues17/18/28/44;prior local edits preserved | PASS |
+| GF-02 Gmail coverage |4 full-history queries,73 exhausted pages,2596 IDs;2257 relevant MIME/4 RAW,1047 since18Oct;final08:20:15 CEST check0 new IDs;339 irrelevant candidates excluded | PASS |
+| GF-03 classification/dedup |authenticated recipient/Message-ID/accepted history/time and unsubscribe token/snapshot;1 invalid+11 unsubscribed,1 later bounce,79 audits;2163 duplicates skipped | APPLIED |
+| GF-04 review boundaries |313 delayed,105 policy/reputation,285 review;no contact or policy/delay send projection change;no SMTP acceptance inference | PASS |
+| GF-05 previous queues |17/18/28/44 terminal;1864 unattempted pending cancelled;1 proven4xx→smtp_failed;2 legacy4xx rows unchanged via exact-count preserve-only option;reservation=NULL | APPLIED |
+| GF-06 preservation |4 SQLite/WAL-consistent backup/simulation pairs+2 assets each;chained full-row readback;all attempts,snapshots,acceptance/contact dates preserved;integrityOK/FK0;Gmail+closure replay0 | PASS |
+| GF-07 regression/eligibility |128 isolated tests,compileall;4140 eligible;1536 invalid/unsubscribed excluded by actual SQLite/source gates;0 pending/sending/uncertain;terminal resume blocked | PASS |
+| GF-08 closeout/publication |AGENTS/README/brief reviewed and current;one register and one task Change Log entry;7 public source/aggregate-doc files;private evidence ignored;runtime stopped | PASS;Git receipt verified separately |
+
 
 Current task C43-01–C43-08: `BHM-CLOSE43-RECOVERY-2026-10-18`.
 
@@ -298,6 +314,8 @@ Single acceptance register: R01–R15 cover `BHM-MODERNIZATION-2026-10-15`; H01�
 | S08 tests/context/Git gate | 47 isolated tests, compileall, JS syntax, 14 browser scenarios; context pack reviewed; one dated task entry; unchanged HEAD/index | `output/recipient-qa/tests.log`, `browser.json`, `closeout-gate.json`; diagnosis report | PASS local; GitHub tip refresh unavailable due network; no commit/push/deploy |
 
 ## Change Log
+
+- 2026-10-20 — `BHM-GMAIL-FINAL-CLOSE-2026-10-20`: Final read-only Gmail scan4 queries/73 full pages/2596 candidates;2257 relevant complete MIME reports with4 cached RAW fallbacks,1047 since18Oct;final08:20:15 CEST rescan0 new IDs. Applied1 invalid+11 unsubscribed,1 later-bounce projection,79 evidence audits;2163 prior IMAP/Gmail duplicates skipped. Final4140 active/1491 invalid/45 unsubscribed;313 delayed/105 policy/285 review unchanged. User additionally authorized permanent closure of all previous queues:17/18/28/44 completed_with_errors,1864 unattempted pending cancelled,1 definite4xx→smtp_failed,2 legacy4xx rows unchanged;reservation released,all executions terminal. Existing closure tool gained an exact-count preserve-only legacy option;default full-history/refusal and ensure_idle/ensure_paused_history gates unchanged.4 consistent SQLite/WAL+2-assets backups,exact simulations,chained independent all-row readback,integrityOK/FK0,Gmail+closure no-op replay;128 isolated tests and compileall PASS. No SMTP/admin attempt,new campaign,resume,recovery,migration,Gmail mutation,restart or deploy;operator absent at entry and remains stopped. Context Pack Closeout complete;one register/one new task entry;prior local activation edits preserved and excluded from authorized source/aggregate-docs commit-and-push. See docs/gmail-final-2026-10-20.md.
 
 - 2026-10-17 — `BHM-CLOSE-ACTIVATE-2026-10-17`: Explicitly authorized permanent40 closure:312 pending→cancelled,completed_with_errors campaign/execution,one audit and SMTP reservation released;661 acceptances/199 bounces,all snapshots/contact timestamps/attempt history preserved,resume rejected. Fresh199-message12h Gmail scan evaluated36/37/38/40:0 new invalid/0 unsubscribe,197 duplicates,1 new unmatched review. Verified consistent DB/2-assets backup,exact simulation/replay/live readback and post-close startup copy.119 tests and1000-contact transient run1000 accepted/1006 fake calls/0 manual resumes passed;8 synthetic browser checks and actual8000 desktop/mobile GET-only acceptance. Standard launcher activated IMAP+SMTP ON,PID21732,only approved updated/3 recovery audits for17/18/28;40 unchanged,0 real SMTP attempts. New editor/empty selection ready,QA stopped. Terminal monitor shows cancelled counts and permanent closure. Context Pack Closeout complete;exactly one new task entry,source-only GitHub publication,earlier local docs preserved,no deploy. See docs/close-activate-2026-10-17.md.
 
