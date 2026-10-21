@@ -1,6 +1,6 @@
 # PROJECT_BRIEF.md
 
-Last updated: 2026-10-20
+Last updated: 2026-10-21
 
 Status: in development
 
@@ -14,7 +14,9 @@ Local mailing application for importing and managing BHM Chemicals contacts, pre
 
 ## Current Status
 
-Incremental Gmail refresh (`BHM-GMAIL-REFRESH-2026-10-20-1410`): **DONE, offline**. Rechecked2026-10-20 08:00–14:10:23 CEST with overlap before the previous08:20 cutoff:4 fully exhausted query pages,28 unique candidates,26 relevant complete MIME reports and2 unrelated metadata-only exclusions. All26 reports are verified delayed evidence;0 new invalid,0 unsubscribed,0 bounce projections,0 duplicates,0 new review cases. Appended26 historical evidence audits only;contacts remain4140 active/1491 invalid/45 unsubscribed. Fresh consistent SQLite/WAL+2-assets backup,exact copied simulation,independent all-row readback,integrityOK/FK0 and no-op replay passed.128 isolated tests and compileall passed. All previous queues remain terminal,operator/SMTP/IMAP stopped;no send,resume,new campaign,restart,recovery,migration or deploy. Final rescan found0 additional IDs. [Refresh evidence](docs/gmail-final-2026-10-20.md#incremental-refresh-at-1410-cest).
+Gmail failed-disposition correction (`BHM-GMAIL-FAILED-ACTION-2026-10-21`): **APPLIED, offline**. User correctly challenged the previous26 delayed labels:all26 had Action:failed+Status:4.0.0;25 are final network/transport failures and1 relay-policy failure. Fresh MIME for those26 is identical to the previous exports. Fixed Action precedence and added one-time linked failed-action-v2 corrections with shared Gmail/IMAP deduplication. Scan20–21Oct:134 candidate IDs,126 complete fresh MIME messages in126 separate threads,8 unrelated metadata exclusions;5 reports arriving during analysis included through09:52:39 CEST. Combined2360 relevant reports with2234 historical cached MIME+4 RAW. Corrected77 prior classifications (75 final failures/2 policy),updated144 historical send projections (143 final transport failures+1 invalid-address bounce),appended157 audits;1 new invalid,0 unsubscribed. Final4139 active/1492 invalid/45 unsubscribed.2187 prior duplicates skipped;ambiguous/policy/address uncertainty never inferred invalid. Consistent SQLite/WAL+2-assets backup,exact simulation,independent all-row readback,integrityOK/FK0 and no-op replay;134 tests+compileall PASS. All previous campaign/execution rows and real send/contact dates preserved;operator remains stopped,no SMTP/resume/restart/deploy. [Correction and results](docs/gmail-recheck-2026-10-21.md). Earlier delayed claims for failed4xx are superseded by this correction.
+
+Incremental Gmail refresh (`BHM-GMAIL-REFRESH-2026-10-20-1410`): **DONE, offline**. Rechecked2026-10-20 08:00–14:10:23 CEST with overlap before the previous08:20 cutoff:4 fully exhausted query pages,28 unique candidates,26 relevant complete MIME reports and2 unrelated metadata-only exclusions. Historical correction2026-10-21:these26 failed4xx reports were incorrectly labeled delayed (25 final network failures+1 relay policy);0 new invalid,0 unsubscribed,0 bounce projections,0 duplicates,0 new review cases. Appended26 historical evidence audits only;contacts remain4140 active/1491 invalid/45 unsubscribed. Fresh consistent SQLite/WAL+2-assets backup,exact copied simulation,independent all-row readback,integrityOK/FK0 and no-op replay passed.128 isolated tests and compileall passed. All previous queues remain terminal,operator/SMTP/IMAP stopped;no send,resume,new campaign,restart,recovery,migration or deploy. Final rescan found0 additional IDs. [Refresh evidence](docs/gmail-final-2026-10-20.md#incremental-refresh-at-1410-cest).
 
 Final Gmail reconciliation and previous queues closure (`BHM-GMAIL-FINAL-CLOSE-2026-10-20`): **DONE, offline**. Four fully paginated Gmail queries:2596 candidates/73 pages;2257 relevant complete MIME reports (2175 cached immutable IDs+82 freshly fetched),4 cached complete RAW fallbacks,1047 relevant messages since2026-10-18. Final2026-10-20 08:20:15 CEST rescan found0 new IDs. Applied1 invalid+11 unsubscribed,1 later-bounce projection and79 evidence audits;2163 duplicates skipped (1584 IMAP/579 Gmail). Final4140 active/1491 invalid/45 unsubscribed.313 delayed,105 policy and285 review records do not change contacts. User additionally authorized permanent closure of all previous queues:17/18/28/44 completed_with_errors,1864 unattempted pending cancelled,1 proven4xx refusal finalized as smtp_failed,2 legacy4xx rows preserved byte-for-byte. All executions terminal,reservation released. Four consistent SQLite/WAL+2-assets backups,exact simulations,chained independent full-row readback,integrityOK/FK0 and Gmail/closure no-op replay passed.128 isolated tests and compileall passed.8000/SMTP/IMAP stopped at entry and remain stopped;no send,new campaign,resume,recovery,migration or deploy. [Results and limitations](docs/gmail-final-2026-10-20.md). Older runtime statements below are historical.
 
@@ -139,6 +141,19 @@ Update this brief only when project scope, status, architecture, integrations, d
 
 
 ## Requirements & Acceptance
+
+Current task FA-01–FA-07: `BHM-GMAIL-FAILED-ACTION-2026-10-21`.
+
+| ID / Requirement | Evidence and result | Status |
+| --- | --- | --- |
+| FA-01 diagnose prior26 | fresh payloads/time identical;all Action:failed+4.0.0;25 network final failures+1 relay policy;old status-first classifier was wrong | VERIFIED |
+| FA-02 Gmail coverage |4 scoped fully paginated searches plus final complete rescan;134 candidates/126 fresh MIME/126 distinct threads;8 metadata exclusions;5 new reports included to09:52:39 CEST | PASS |
+| FA-03 source correction |failed4xx→delivery_failed without invalidity;policy/auth/relay precedence;linked failed-action-v2 revisions once across Gmail/IMAP;stronger final diagnostics preserved | PASS |
+| FA-04 exact data delta |1 invalid/0 unsubscribe;144 later-failure send projections,157 audits including77 classification corrections;final4139/1492/45;2187 duplicates skipped | APPLIED |
+| FA-05 preservation/replay |consistent SQLite/WAL+2 assets;copy simulation and independent full-row readback;schema/dates/attempts/closures unchanged;integrityOK/FK0;replay0 | PASS |
+| FA-06 regressions/eligibility |134 isolated tests,compileall;true delays,failed4xx,policy,unknowns,legacy correction,cross-source dedup and existing stronger diagnostic;1537 excluded/4139 eligible | PASS |
+| FA-07 closeout |AGENTS/README/brief updated;previous false26-delayed report explicitly corrected;one register/one task Change Log entry;private evidence ignored;prior local edits preserved | PASS;Git receipt separately verified |
+
 
 Current task GR-01–GR-05: `BHM-GMAIL-REFRESH-2026-10-20-1410`.
 
@@ -327,6 +342,8 @@ Single acceptance register: R01–R15 cover `BHM-MODERNIZATION-2026-10-15`; H01�
 | S08 tests/context/Git gate | 47 isolated tests, compileall, JS syntax, 14 browser scenarios; context pack reviewed; one dated task entry; unchanged HEAD/index | `output/recipient-qa/tests.log`, `browser.json`, `closeout-gate.json`; diagnosis report | PASS local; GitHub tip refresh unavailable due network; no commit/push/deploy |
 
 ## Change Log
+
+- 2026-10-21 — `BHM-GMAIL-FAILED-ACTION-2026-10-21`: User's challenge confirmed:previous26 reports had Action:failed despite4.0.0;25 final network failures+1 relay policy were mislabeled delayed by status-first logic. Fixed classifier,policy recognition and shared one-time linked canonical correction;preserve invalidity proof requirements and stronger prior diagnostics. Re-read126 current MIME messages/126 threads among134 candidates,excluded8 unrelated metadata records,included5 arrivals during analysis through09:52:39 CEST;2360 relevant reports with historical cache/4 RAW. Applied1 new invalid,0 unsubscribe,144 later-failure send projections,157 audits including77 classification corrections;2187 duplicates skipped. Final4139 active/1492 invalid/45 unsubscribed. Backup SQLite/WAL+2 assets,exact simulation,independent all-row readback,integrityOK/FK0,no-op replay;134 isolated tests+compileall PASS. Dates,acceptances,attempts,selection and campaign/execution closures preserved;no SMTP,new campaign,resume,restart,recovery,migration,Gmail mutation or deploy. Context Pack Closeout complete;one register/one new entry;prior local edits preserved and private evidence excluded from source publication. See docs/gmail-recheck-2026-10-21.md.
 
 - 2026-10-20 — `BHM-GMAIL-REFRESH-2026-10-20-1410`: Repeated read-only Gmail synchronization for08:00–14:10:23 CEST with overlap:4 fully paginated queries/28 candidates,26 relevant complete MIME reports and2 unrelated metadata-only exclusions. All26 are delayed;0 invalid/0 unsubscribe/0 bounce projection/0 duplicate/0 new review case. Applied26 historical evidence audits only;contacts remain4140 active/1491 invalid/45 unsubscribed. Consistent SQLite/WAL+2-assets backup,exact simulation,independent all-row readback,integrityOK/FK0 and no-op replay passed;128 isolated tests and compileall PASS. All previous campaigns stay terminal;no new send/campaign/resume/recovery/migration/restart/Gmail change/deploy. Temporary Gmail rate limit cleared after backoff;all queries completed and final rescan found0 new IDs. Context Pack Closeout complete;one new register/one task entry,prior local work preserved,only aggregate documentation intended for source publication. See refresh section in docs/gmail-final-2026-10-20.md.
 

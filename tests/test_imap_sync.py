@@ -121,6 +121,16 @@ class Case(unittest.TestCase):
         self.assertEqual(result['contacts'],1)
         self.assertEqual(result['mail_evidence'],0)
 
+    def test_final_failed_4xx_is_projected_without_contact_change_and_deduped_with_gmail(self):
+        self.completed();msg=self.dsn('4.0.0','failed','x-error; Network error')
+        result=self.ingest(wire(msg))
+        self.assertEqual(result['hard_bounces'],0);self.assertEqual(result['contact_changes'],0)
+        self.assertEqual(self.row('SELECT status FROM contacts')['status'],'active')
+        self.assertEqual(self.row('SELECT status FROM email_sends')['status'],'bounced_later')
+        with db.get_connection() as c:
+            p=rec.plan(c,self.cid,[msg]);self.assertTrue(p['events'][0]['duplicate'])
+            self.assertFalse(p['contacts']);self.assertFalse(p['sends'])
+
     def test_disconnect_no_cursor_loss_or_secret_leak(self):
         self.completed();e=self.scanner({1:wire(self.dsn())});self.imap.fail=True;e.tick()
         row=self.row('SELECT * FROM mail_sync_state');self.assertEqual(row['last_uid'],0)

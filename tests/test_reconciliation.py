@@ -83,6 +83,79 @@ class ReconciliationCase(unittest.TestCase):
         msg['payload']['headers']=None
         self.assertEqual(self.propose([msg])['contacts'],[])
 
+    def test_failed_4xx_is_final_delivery_failure_without_invalidating_address(self):
+        self.completed();msg=self.dsn('4.0.0','failed','x-error; Network error: Unexpectedly disconnected (BANNER)')
+        p=self.propose([msg]);self.assertEqual(p['events'][0]['kind'],'delivery_failed')
+        self.assertEqual(p['contacts'],[]);self.assertEqual(len(p['sends']),1)
+        self.apply(p)
+        s=self.row('SELECT * FROM email_sends');self.assertEqual(s['status'],'bounced_later')
+        for field in ('accepted_at','sent_at','message_id','html_snapshot','text_snapshot'):
+            self.assertEqual(s[field],self.send[field])
+        self.assertEqual(self.row('SELECT status FROM contacts')['status'],'active')
+        self.assertEqual(self.row('SELECT status FROM send_attempt_history')['status'],'accepted_by_smtp')
+        self.assertEqual(rec.classify('delayed','4.0.0','Network error'),('delayed',None))
+        self.assertEqual(rec.classify('','4.0.0','Network error'),('review',None))
+        self.assertEqual(rec.classify('failed','4.7.1','451 [R7] queue saturation'),('sender_policy',None))
+        for diag in ('451 relay not permitted!',
+                     '453 use me as a relay, but not configured (#4.7.1)',
+                     '451 4.4.4 Mail received as unauthenticated; tenant has no mail-enabled subscriptions'):
+            self.assertEqual(rec.classify('failed','4.0.0',diag),('sender_policy',None))
+
+    def test_correct_legacy_failed_4xx_audit_once_without_losing_deduplication(self):
+        from tools.reconcile_gmail import snapshot,validate_delta
+        self.completed();msg=self.dsn('4.0.0','failed','x-error; Network error: Unexpectedly disconnected (BANNER)')
+        old=self.propose([msg]);e=old['events'][0];e['kind']='delayed';e['bounce']=False
+        e['canonical_key']=rec.canonical_key(e)
+        import hashlib
+        identity=[e['report_id'] or e['gmail_id'],e['recipient'],e.get('action'),e.get('status'),e.get('diagnostic'),e['kind']]
+        e['key']=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
+        old['sends']=[];self.apply(old)
+        correction=self.propose([msg]);self.assertFalse(correction['events'][0]['duplicate'])
+        self.assertEqual(correction['events'][0]['reclassifies_key'],e['canonical_key'])
+        with db.get_connection() as c:
+            before=snapshot(c);rec.apply(c,correction);validate_delta(before,snapshot(c),correction)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM execution_events WHERE message LIKE ?',(rec.PREFIX+'%',)).fetchone()[0],2)
+            before=snapshot(c)
+            alias=copy.deepcopy(msg);alias['id']='another-gmail-copy'
+            replay=rec.plan(c,self.cid,[msg,alias]);rec.apply(c,replay)
+            self.assertFalse(replay['contacts']);self.assertFalse(replay['sends']);self.assertEqual(snapshot(c),before)
+
+    def test_narrow_offline_workflow_projects_final_4xx_but_not_delay_or_policy(self):
+        from tools.close_and_reconcile import reconcile
+        self.completed()
+        with db.get_connection() as c:
+            plans=reconcile(c,[self.dsn('4.0.0','failed','x-error; Network error')],db.utc_now())
+            self.assertEqual(len(plans[0]['sends']),1);self.assertFalse(plans[0]['contacts'])
+            self.assertEqual(c.execute('SELECT status FROM email_sends').fetchone()[0],'bounced_later')
+
+    def test_final_network_failure_does_not_replace_existing_invalid_diagnostic(self):
+        self.completed();self.apply(self.propose([self.dsn()]))
+        before=self.row('SELECT * FROM email_sends')
+        later=self.dsn('4.0.0','failed','x-error; Network error')
+        later['payload']['headers'].append(dict(name='Message-ID',value='<later-network@example.test>'))
+        p=self.propose([later]);self.assertFalse(p['sends']);self.assertFalse(p['contacts'])
+        self.apply(p)
+        self.assertEqual(self.row('SELECT * FROM email_sends'),before)
+        self.assertEqual(self.row('SELECT status FROM contacts')['status'],'invalid')
+
+    def test_legacy_failed_relay_policy_is_corrected_once_without_send_projection(self):
+        from tools.close_and_reconcile import reconcile
+        from tools.reconcile_gmail import snapshot
+        import hashlib
+        self.completed();msg=self.dsn('4.0.0','failed','smtp; 453 use me as a relay (#4.7.1)')
+        old=self.propose([msg]);e=old['events'][0];e['kind']='delayed';e['bounce']=False
+        e['canonical_key']=rec.canonical_key(e)
+        identity=[e['report_id'] or e['gmail_id'],e['recipient'],e.get('action'),e.get('status'),e.get('diagnostic'),e['kind']]
+        e['key']=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
+        old['sends']=[];self.apply(old)
+        with db.get_connection() as c:
+            before=snapshot(c);plans=reconcile(c,[msg],db.utc_now())
+            event=plans[0]['events'][0]
+            self.assertEqual(event['kind'],'sender_policy');self.assertEqual(event['reclassifies_key'],e['canonical_key'])
+            self.assertFalse(event['duplicate']);self.assertFalse(plans[0]['sends']);self.assertFalse(plans[0]['contacts'])
+            self.assertEqual(snapshot(c)['email_sends'],before['email_sends'])
+            after=snapshot(c);reconcile(c,[msg],db.utc_now());self.assertEqual(snapshot(c),after)
+
     def test_closure_import_keeps_sender_policy_review_only(self):
         from tools.close_and_reconcile import reconcile
         self.completed()

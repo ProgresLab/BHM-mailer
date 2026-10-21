@@ -34,7 +34,7 @@ def reconcile(conn,messages,timestamp,expected=None):
             if e['kind'] in {'sender_policy','delayed'} or e['kind'].startswith('review'):
                 e['bounce']=False
         allowed={e['key'] for e in proposal['events'] if e['bounce'] and
-                 (e['kind'].startswith('invalid_') or e['kind']=='hard_bounce')}
+                 (e['kind'].startswith('invalid_') or e['kind'] in {'hard_bounce','delivery_failed'})}
         proposal['sends']=[s for s in proposal['sends'] if s['evidence_key'] in allowed]
         if expected is not None and (len(plans)>=len(expected) or proposal!=expected[len(plans)]):
             raise ValueError('Gmail proposal changed after simulation')

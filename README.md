@@ -8,6 +8,8 @@ Git tracks application source, documentation, branding assets, and the non-secre
 
 ## Setup and Run
 
+Current correction (2026-10-21): failed+4xx DSNs are final message failures, not delivery delayed and not automatic invalidity. Previous26 labels corrected;77 historical classification corrections,144 later-failure projections,1 new invalid. Final4139 active/1492 invalid/45 unsubscribed;134 tests,backup/simulation/readback/replay passed. Operator remains stopped. [Details](docs/gmail-recheck-2026-10-21.md). Earlier runtime statements are historical.
+
 Current acceptance (2026-10-20, `BHM-GMAIL-FINAL-CLOSE-2026-10-20`): **offline reconciliation and closure complete**.1 new invalid+11 unsubscribed;final4140 active/1491 invalid/45 unsubscribed.2257 relevant MIME reports from2596 fully paginated candidates;2163 duplicates skipped,285 review records unresolved. All previous started queues17/18/28/44 are terminal:1864 pending cancelled,1 proven4xx refusal→smtp_failed;2 legacy4xx rows and all historical send/acceptance/contact dates preserved.128 isolated tests,backups/simulations/full-row readback and no-op replay passed.8000/SMTP/IMAP stopped at entry and remain stopped. No send,new campaign,resume,restart or deploy. [Results and limitations](docs/gmail-final-2026-10-20.md). Older runtime statements below are historical.
 
 Current acceptance (2026-10-18, `BHM-CLOSE43-RECOVERY-2026-10-18`): campaign43 is permanently completed_with_errors, with914 historical acceptances,85 unattempted cancellations,1 definite refusal retained as smtp_failed and0 unknown. Gmail:2505 full MIME messages/52 paginated search pages/6 RAW fallbacks;3 new invalid+5 unsubscribed. Actual8000 is active, IMAP ON/SMTP ON, with no campaign/admin send after startup. [Acceptance and limitations](docs/closure43-recovery-2026-10-18.md). All older runtime/preflight descriptions below are historical.
@@ -287,3 +289,8 @@ IMAP initially fetches up to1MiB; recognized reports may expand once to8MiB. Inc
 ## Legacy refusal preservation during offline closure
 
 For explicitly authorized closure of all previous queues, `--expected-preserved-refused N` counts legacy unaccepted4xx rows without immutable attempt ledgers. The existing closure workflow leaves every field of those rows unchanged, cancels only unattempted pending rows, terminally closes the campaign and records the preserved IDs in its closure audit. It does not invent smtp_failed, acceptance, invalidity or attempt records. Default refusal handling still requires complete finished4xx history; stopped-runtime,backup/copy,exact-delta and replay gates remain mandatory.
+
+
+## DSN failed disposition and legacy correction
+
+Action determines whether delivery attempts ended:failed with4xx becomes delivery_failed;delayed remains pending at the remote MTA. Network/SERVFAIL/TIMEOUT does not prove a nonexistent address. Policy/authentication/relay failures do not project a bounce in the controlled import. Existing reconciliation appends one linked failed-action-v2 correction for misclassified legacy evidence;original audit rows remain intact and Gmail/IMAP replays deduplicate. Existing stronger bounced_later diagnostics and all accepted-attempt timestamps remain intact. See [RFC3464 section2.3.3](https://www.rfc-editor.org/rfc/rfc3464.html#section-2.3.3).

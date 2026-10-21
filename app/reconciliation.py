@@ -107,6 +107,10 @@ def canonical_key(e):
         identity[0] = json.dumps([e.get('original_message_ids'),e.get('date')],sort_keys=True)
     key = hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
     # Untrusted reports cannot suppress a later trusted copy of the same report.
+    if e.get('kind') == 'delivery_failed' or e.get('classification_revision') == 'failed-action-v2':
+        # Correct the former failed+4xx -> delayed classification once, while
+        # retaining the original evidence and shared Gmail/IMAP deduplication.
+        return key + ':failed-action-v2'
     return key + (':review' if e.get('kind','').startswith('review') else '')
 
 
@@ -136,10 +140,15 @@ def addresses(value):
 
 def classify(action, status, diagnostic):
     detail = ' '.join(diagnostic.lower().split())
-    if status.startswith(('4.7','5.7')) or re.search(r'\[r6\]|spam|blacklist|blocklist|sender.*blocked|reputation|relay access denied|policy reasons|\btls\b|certificate|encrypt', detail):
+    if status.startswith(('4.7','5.7')) or re.search(r'\b[45]\.7\.\d|\[r6\]|spam|blacklist|blocklist|sender.*blocked|reputation|relay access denied|relay not permitted|as a relay|unauthenticated|mail-enabled subscriptions|policy reasons|\btls\b|certificate|encrypt', detail):
         return 'sender_policy', None
-    if action == 'delayed' or status.startswith('4'):
+    if action == 'delayed':
         return 'delayed', None
+    if status.startswith('4'):
+        # Action is the final disposition of this message (RFC 3464 2.3.3).
+        # A transient diagnostic can end in failure after the MTA gives up;
+        # it does not establish that the recipient address is invalid.
+        return ('delivery_failed', None) if action == 'failed' else ('review', None)
     if action != 'failed':
         return 'review', None
     # Policy/relay/authentication blocks never establish a nonexistent mailbox.
@@ -239,12 +248,19 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
         for a in attempts:
             by_mid[normalize_id(a['message_id'])] = (s, a['started'])
     prior = set()
+    legacy_failed_4xx = set()
+    def remember_legacy(saved):
+        if saved.get('kind') == 'delayed' and saved.get('action') == 'failed' and str(saved.get('status','')).startswith('4'):
+            legacy_failed_4xx.add(canonical_key(saved))
     for r in conn.execute('SELECT message FROM execution_events WHERE campaign_id=?', (campaign_id,)):
         if r[0].startswith(PREFIX):
             saved = json.loads(r[0][len(PREFIX):])
             prior.update((saved['key'], canonical_key(saved)))
+            remember_legacy(saved)
     if conn.execute("SELECT 1 FROM sqlite_master WHERE name='mail_evidence'").fetchone():
-        prior.update(r[0] for r in conn.execute('SELECT event_key FROM mail_evidence WHERE campaign_id=?',(campaign_id,)))
+        for r in conn.execute('SELECT event_key,evidence FROM mail_evidence WHERE campaign_id=?',(campaign_id,)):
+            prior.add(r[0])
+            remember_legacy(json.loads(r[1] or '{}'))
     events, seen = [], set()
     for message in messages:
         root = message.get('payload') or {}
@@ -300,7 +316,7 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
                 events.append(dict(base, recipient=next(iter(sorted(recipient_set)), ''),
                     send_id=s['id'] if s else None,
                     kind=kind if verified else 'review_unverified_dsn', target=target if verified else None,
-                    bounce=bool(verified and action == 'failed' and (source == 'gmail' or target is not None)), action=action, status=status,
+                    bounce=bool(verified and action == 'failed' and (source == 'gmail' or target is not None or kind == 'delivery_failed')), action=action, status=status,
                     original_recipient=str(record.get('Original-Recipient', '')),
                     final_recipient=str(record.get('Final-Recipient', '')),
                     original_message_ids=sorted(refs), diagnostic=diagnostic,
@@ -314,7 +330,14 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
     for e in events:
         identity = [e['report_id'] or e['gmail_id'], e['recipient'], e.get('action'), e.get('status'), e.get('diagnostic'), e['kind']]
         e['key'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        if e['kind'] == 'sender_policy' and canonical_key(e) in legacy_failed_4xx:
+            e['reclassifies_key'] = canonical_key(e)
+            e['classification_revision'] = 'failed-action-v2'
         e['canonical_key'] = canonical_key(e)
+        if e['kind'] == 'delivery_failed':
+            previous_key = e['canonical_key'].removesuffix(':failed-action-v2')
+            if previous_key in prior:
+                e['reclassifies_key'] = previous_key
         e['duplicate'] = e['key'] in seen or e['key'] in prior or e['canonical_key'] in prior or e['canonical_key'] in seen
         # Unrelated messages/unknown recipients stay only in the private report.
         e['persist'] = e['send_id'] is not None
@@ -344,6 +367,8 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
         if e['bounce']:
             if s['status'] not in {'accepted_by_smtp', 'sent', 'bounced_later'}:
                 raise ValueError('Conflicting historical send status; review before changing')
+            if e['kind'] == 'delivery_failed' and (s['status'] == 'bounced_later' or s['id'] in bounce_sends):
+                continue  # Keep an existing, possibly stronger final diagnostic.
             bounce_sends[s['id']] = dict(send_id=s['id'], old_status=s['status'],
                 old_trace=[s[k] for k in ('trace_status','trace_detail','trace_source','final_status_at','last_checked_at')],
                 new_status='bounced_later', evidence_key=e['key'], gmail_id=e['gmail_id'], diagnostic=e['reason'])
