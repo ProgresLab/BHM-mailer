@@ -120,6 +120,8 @@ def main():
     p.add_argument('--input', type=Path, nargs='+', required=True)
     p.add_argument('--manifest', type=Path, required=True)
     p.add_argument('--paused-history', action='store_true', help='Offline stopped-runtime fence; reconcile accepted history only, preserving pending.')
+    p.add_argument('--exclude-final-failures', action='store_true',
+        help='Explicit operator exclusion: verified Action=failed sets invalid, retaining technical diagnostics and unsubscribe priority.')
     a=p.parse_args()
     # Hold both fences throughout backup, simulation, apply and readback. This
     # tool never imports app.main, initializes schema or starts a worker.
@@ -145,7 +147,8 @@ def run(a):
                 original_schema=schema(saved)
                 if snapshot(source) != before:
                     raise ValueError('Source changed during backup')
-                proposal=rec.plan(saved,a.campaign,messages,paused_history=a.paused_history)
+                proposal=rec.plan(saved,a.campaign,messages,paused_history=a.paused_history,
+                                  exclude_final_failures=a.exclude_final_failures)
         assets=ROOT/'uploads'/'campaign_assets'
         manifest_assets={}
         if assets.exists():
@@ -170,7 +173,8 @@ def run(a):
         with connect(simulation, True) as readback:
             checks(readback)
             validate_delta(before,snapshot(readback),proposal)
-            replay=rec.plan(readback,a.campaign,messages,paused_history=a.paused_history)
+            replay=rec.plan(readback,a.campaign,messages,paused_history=a.paused_history,
+                            exclude_final_failures=a.exclude_final_failures)
             if replay['contacts'] or replay['sends'] or any(e['persist'] and not e['duplicate'] for e in replay['events']):
                 raise ValueError('Replay is not idempotent')
         a.manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -181,7 +185,7 @@ def run(a):
             contacts=len(proposal['contacts']),sends=len(proposal['sends']),delta=delta)))
     else:
         manifest=json.loads(a.manifest.read_text(encoding='utf-8'))
-        if manifest['phase'] != 'simulated' or manifest['database'] != str(a.database.resolve()) or inputs != manifest['inputs'] or manifest['proposal']['campaign_id'] != a.campaign:
+        if manifest['phase'] != 'simulated' or manifest['database'] != str(a.database.resolve()) or inputs != manifest['inputs'] or manifest['proposal']['campaign_id'] != a.campaign or manifest['proposal'].get('exclude_final_failures',False) != a.exclude_final_failures:
             raise ValueError('Manifest/input mismatch')
         backup=Path(manifest['backup'])
         if digest(backup) != manifest['backup_sha256']:
@@ -196,7 +200,8 @@ def run(a):
             live.execute('BEGIN IMMEDIATE')
             if snapshot(live) != before or schema(live) != original_schema:
                 raise ValueError('Operational data changed after backup; replan')
-            current=rec.plan(live,a.campaign,messages,paused_history=a.paused_history)
+            current=rec.plan(live,a.campaign,messages,paused_history=a.paused_history,
+                             exclude_final_failures=a.exclude_final_failures)
             if current != manifest['proposal']:
                 raise ValueError('Plan changed')
             rec.apply(live,current,manifest['timestamp'])

@@ -131,6 +131,16 @@ class Case(unittest.TestCase):
             p=rec.plan(c,self.cid,[msg]);self.assertTrue(p['events'][0]['duplicate'])
             self.assertFalse(p['contacts']);self.assertFalse(p['sends'])
 
+    def test_operator_gmail_exclusion_deduplicates_subsequent_automatic_imap(self):
+        self.completed();msg=self.dsn('4.0.0','failed','x-error; Network error')
+        with db.get_connection() as c:
+            rec.apply(c,rec.plan(c,self.cid,[msg],exclude_final_failures=True))
+        count=self.row('SELECT COUNT(*) n FROM execution_events')['n']
+        result=self.ingest(wire(msg))
+        self.assertEqual(result['contact_changes'],0);self.assertEqual(result['hard_bounces'],0)
+        self.assertEqual(self.row('SELECT status FROM contacts')['status'],'invalid')
+        self.assertEqual(self.row('SELECT COUNT(*) n FROM execution_events')['n'],count)
+
     def test_disconnect_no_cursor_loss_or_secret_leak(self):
         self.completed();e=self.scanner({1:wire(self.dsn())});self.imap.fail=True;e.tick()
         row=self.row('SELECT * FROM mail_sync_state');self.assertEqual(row['last_uid'],0)

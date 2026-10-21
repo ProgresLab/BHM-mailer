@@ -1,6 +1,6 @@
 # PROJECT_BRIEF.md
 
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 
 Status: in development
 
@@ -13,6 +13,8 @@ BHM Mailer / BHM Chemicals Mailing Tool
 Local mailing application for importing and managing BHM Chemicals contacts, preparing single-language campaigns, previewing email output, selecting recipients, sending in dry-run or configured SMTP mode, and reviewing campaign delivery/status history.
 
 ## Current Status
+
+Gmail operator exclusion (`BHM-GMAIL-OPERATOR-EXCLUSION-2026-10-22`): **APPLIED, offline**. Explicit current operator instruction authorizes invalid as a sending exclusion for authenticated, exactly matched final failures, including network/policy diagnostics; technical classifications remain unchanged. Refreshed21Oct00:00–22Oct01:42:57 CEST:171 candidates,18 fully exhausted search pages including final rescan,162 fresh complete MIME reports,9 unrelated metadata exclusions;included1 arriving report. Combined2462 unique messages with2360 cached historical MIME and4 RAW fallbacks. Applied531 invalid/0 new unsubscribed;final3608 active/2023 invalid/45 unsubscribed. Screenshot contact verified and invalid.1912 prior duplicates skipped (1390 IMAP/522 Gmail);532 linked operator decisions,96 later-failure send projections,534 appended audits.254 genuine delayed and128 technical policy records retained as technical classifications;105 unverifiable/unmatched records remain unresolved,including2 current reports. SQLite/WAL+2-assets backup,exact copied simulation,independent all-row readback,integrityOK/FK0 and no-op replay passed;139 tests+compileall passed. All previous queues remain terminal;dates,acceptances and attempt history preserved. Operator stayed stopped;no SMTP/resume/restart/deploy. [Results and scope](docs/gmail-exclusion-2026-10-22.md). Earlier invalidity-proof statements describe default automatic classification;this task additionally records the explicit manual exclusion policy.
 
 Gmail failed-disposition correction (`BHM-GMAIL-FAILED-ACTION-2026-10-21`): **APPLIED, offline**. User correctly challenged the previous26 delayed labels:all26 had Action:failed+Status:4.0.0;25 are final network/transport failures and1 relay-policy failure. Fresh MIME for those26 is identical to the previous exports. Fixed Action precedence and added one-time linked failed-action-v2 corrections with shared Gmail/IMAP deduplication. Scan20–21Oct:134 candidate IDs,126 complete fresh MIME messages in126 separate threads,8 unrelated metadata exclusions;5 reports arriving during analysis included through09:52:39 CEST. Combined2360 relevant reports with2234 historical cached MIME+4 RAW. Corrected77 prior classifications (75 final failures/2 policy),updated144 historical send projections (143 final transport failures+1 invalid-address bounce),appended157 audits;1 new invalid,0 unsubscribed. Final4139 active/1492 invalid/45 unsubscribed.2187 prior duplicates skipped;ambiguous/policy/address uncertainty never inferred invalid. Consistent SQLite/WAL+2-assets backup,exact simulation,independent all-row readback,integrityOK/FK0 and no-op replay;134 tests+compileall PASS. All previous campaign/execution rows and real send/contact dates preserved;operator remains stopped,no SMTP/resume/restart/deploy. [Correction and results](docs/gmail-recheck-2026-10-21.md). Earlier delayed claims for failed4xx are superseded by this correction.
 
@@ -141,6 +143,19 @@ Update this brief only when project scope, status, architecture, integrations, d
 
 
 ## Requirements & Acceptance
+
+Current task OE-01–OE-07: `BHM-GMAIL-OPERATOR-EXCLUSION-2026-10-22`.
+
+| ID / Requirement | Evidence and result | Status |
+| --- | --- | --- |
+| OE-01 current decision | verified final Action:failed may exclude as invalid on explicit operator instruction;technical diagnostic retained;unsubscribe wins | APPLIED |
+| OE-02 Gmail coverage |171 candidates/18 complete query pages;162 fresh MIME/9 metadata exclusions;1 arriving report included through22Oct01:42:57 CEST;2462 unique with historical cache/4 RAW | PASS |
+| OE-03 source and dedup |existing reconciliation extended by explicit offline-only flag;separate linked operator decision and ordinary Gmail/IMAP aliases;trust/exact-match gates unchanged | PASS |
+| OE-04 operational delta |531 invalid/0 new unsubscribe;final3608/2023/45;96 historical projections,534 audits;1912 prior duplicates skipped | APPLIED |
+| OE-05 backup/preservation |consistent SQLite/WAL+2 assets;exact simulation and independent readback;integrityOK/FK0;all dates,attempts,acceptances,queues and selections preserved;replay0 | PASS |
+| OE-06 QA and exclusions |139 isolated tests+compileall;2068 invalid/unsubscribed excluded from new selection;8000/SMTP/IMAP stay stopped | PASS |
+| OE-07 closeout |AGENTS/README/brief/report current;one register/one task Change Log entry;prior local edits preserved;private evidence excluded | PASS;Git receipt separately verified |
+
 
 Current task FA-01–FA-07: `BHM-GMAIL-FAILED-ACTION-2026-10-21`.
 
@@ -342,6 +357,8 @@ Single acceptance register: R01–R15 cover `BHM-MODERNIZATION-2026-10-15`; H01�
 | S08 tests/context/Git gate | 47 isolated tests, compileall, JS syntax, 14 browser scenarios; context pack reviewed; one dated task entry; unchanged HEAD/index | `output/recipient-qa/tests.log`, `browser.json`, `closeout-gate.json`; diagnosis report | PASS local; GitHub tip refresh unavailable due network; no commit/push/deploy |
 
 ## Change Log
+
+- 2026-10-22 — `BHM-GMAIL-OPERATOR-EXCLUSION-2026-10-22`: Applied explicit operator exclusion of verified final failures as invalid,including network/policy failures,without inventing nonexistent-mailbox evidence. Extended existing offline Gmail workflow with opt-in flag,linked decision audit and shared Gmail/IMAP dedup;default automatic classification and all trust/runtime gates unchanged. Scan21Oct00:00–22Oct01:42:57 CEST:171 candidates/18 full query pages,162 fresh complete MIME,9 metadata-only exclusions,1 arriving report;2462 unique including historical cache/4 RAW. Applied531 invalid/0 new unsubscribe;final3608 active/2023 invalid/45 unsubscribed;screenshot contact independently confirmed invalid.1912 prior duplicates skipped;532 new operator decisions,96 later-failure projections,534 appended audits.105 records remain unresolved,including2 current unverified external reports. Consistent SQLite/WAL+2-assets backup,exact simulation,independent all-row readback,integrityOK/FK0,no-op replay;139 isolated tests+compileall PASS. Dates,acceptances,attempt history and terminal queues preserved;no SMTP,new campaign,resume,restart,Gmail mutation or deploy. Context Pack Closeout complete;one register/one new entry;prior local edits retained and private evidence excluded from authorized main publication. See docs/gmail-exclusion-2026-10-22.md.
 
 - 2026-10-21 — `BHM-GMAIL-FAILED-ACTION-2026-10-21`: User's challenge confirmed:previous26 reports had Action:failed despite4.0.0;25 final network failures+1 relay policy were mislabeled delayed by status-first logic. Fixed classifier,policy recognition and shared one-time linked canonical correction;preserve invalidity proof requirements and stronger prior diagnostics. Re-read126 current MIME messages/126 threads among134 candidates,excluded8 unrelated metadata records,included5 arrivals during analysis through09:52:39 CEST;2360 relevant reports with historical cache/4 RAW. Applied1 new invalid,0 unsubscribe,144 later-failure send projections,157 audits including77 classification corrections;2187 duplicates skipped. Final4139 active/1492 invalid/45 unsubscribed. Backup SQLite/WAL+2 assets,exact simulation,independent all-row readback,integrityOK/FK0,no-op replay;134 isolated tests+compileall PASS. Dates,acceptances,attempts,selection and campaign/execution closures preserved;no SMTP,new campaign,resume,restart,recovery,migration,Gmail mutation or deploy. Context Pack Closeout complete;one register/one new entry;prior local edits preserved and private evidence excluded from source publication. See docs/gmail-recheck-2026-10-21.md.
 

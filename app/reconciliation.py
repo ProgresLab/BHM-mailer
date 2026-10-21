@@ -110,8 +110,10 @@ def canonical_key(e):
     if e.get('kind') == 'delivery_failed' or e.get('classification_revision') == 'failed-action-v2':
         # Correct the former failed+4xx -> delayed classification once, while
         # retaining the original evidence and shared Gmail/IMAP deduplication.
-        return key + ':failed-action-v2'
-    return key + (':review' if e.get('kind','').startswith('review') else '')
+        key += ':failed-action-v2'
+    elif e.get('kind','').startswith('review'):
+        key += ':review'
+    return key + (':operator-final-exclusion-v1' if e.get('operator_exclusion') else '')
 
 
 def authenticated(part):
@@ -236,7 +238,10 @@ def ensure_paused_history(conn, campaign_id):
     return campaign
 
 
-def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-chemicals.com', paused_history=False):
+def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-chemicals.com', paused_history=False,
+         exclude_final_failures=False):
+    if exclude_final_failures and source != 'gmail':
+        raise ValueError('Final-failure exclusion requires an explicit offline Gmail operator decision')
     if source == 'gmail':
         (ensure_paused_history if paused_history else ensure_idle)(conn, campaign_id)
     sends = [dict(r) for r in conn.execute('''SELECT s.*,c.status contact_status,c.unsubscribe_token
@@ -256,6 +261,7 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
         if r[0].startswith(PREFIX):
             saved = json.loads(r[0][len(PREFIX):])
             prior.update((saved['key'], canonical_key(saved)))
+            prior.update(saved[k] for k in ('base_evidence_key','base_canonical_key') if saved.get(k))
             remember_legacy(saved)
     if conn.execute("SELECT 1 FROM sqlite_master WHERE name='mail_evidence'").fetchone():
         for r in conn.execute('SELECT event_key,evidence FROM mail_evidence WHERE campaign_id=?',(campaign_id,)):
@@ -322,12 +328,17 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
                     original_message_ids=sorted(refs), diagnostic=diagnostic,
                     smtp_attempt_started=started,
                     reason=diagnostic if verified else 'Missing authenticated source, exact accepted Message-ID/recipient, routing or time'))
+                if exclude_final_failures and verified and action == 'failed' and target != 'invalid':
+                    events[-1].update(target='invalid', operator_exclusion='verified-final-failure-v1',
+                        reason='Operator-requested exclusion after verified final delivery failure; '
+                               'no assertion that mailbox is nonexistent. Diagnostic: ' + diagnostic)
         else:
             report_like = root.get('mime_type') == 'multipart/report' or re.search(
                 r'delivery (?:failure|status notification)|undeliver|returned mail', header(root,'Subject'), re.I)
             events.append(dict(base, recipient='', send_id=None, kind='review_text_report' if report_like else 'no_action', target=None,
                                bounce=False, reason='No structured DSN or verified unsubscribe notification'))
     for e in events:
+        operator_exclusion = e.pop('operator_exclusion', None)
         identity = [e['report_id'] or e['gmail_id'], e['recipient'], e.get('action'), e.get('status'), e.get('diagnostic'), e['kind']]
         e['key'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         if e['kind'] == 'sender_policy' and canonical_key(e) in legacy_failed_4xx:
@@ -338,6 +349,16 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
             previous_key = e['canonical_key'].removesuffix(':failed-action-v2')
             if previous_key in prior:
                 e['reclassifies_key'] = previous_key
+        if operator_exclusion:
+            # A new operator decision may suppress a recipient whose technical
+            # DSN was already imported. Keep both evidence identities so ordinary
+            # Gmail/IMAP copies remain duplicates, without rewriting the DSN.
+            e['base_evidence_key'], e['base_canonical_key'] = e['key'], e['canonical_key']
+            if e['key'] in prior or e['canonical_key'] in prior or e['kind'] == 'sender_policy' or e['kind'].startswith('review'):
+                e['bounce'] = False
+            e['operator_exclusion'] = operator_exclusion
+            e['key'] = hashlib.sha256(json.dumps([e['key'],operator_exclusion]).encode()).hexdigest()
+            e['canonical_key'] = canonical_key(e)
         e['duplicate'] = e['key'] in seen or e['key'] in prior or e['canonical_key'] in prior or e['canonical_key'] in seen
         # Unrelated messages/unknown recipients stay only in the private report.
         e['persist'] = e['send_id'] is not None
@@ -371,8 +392,10 @@ def plan(conn, campaign_id, messages, *, source='gmail', mailbox='marketing@bhm-
                 continue  # Keep an existing, possibly stronger final diagnostic.
             bounce_sends[s['id']] = dict(send_id=s['id'], old_status=s['status'],
                 old_trace=[s[k] for k in ('trace_status','trace_detail','trace_source','final_status_at','last_checked_at')],
-                new_status='bounced_later', evidence_key=e['key'], gmail_id=e['gmail_id'], diagnostic=e['reason'])
-    return dict(campaign_id=campaign_id, source=source, paused_history=paused_history, message_count=len(messages), events=events,
+                new_status='bounced_later', evidence_key=e['key'], gmail_id=e['gmail_id'],
+                diagnostic=e['diagnostic'] if e.get('operator_exclusion') else e['reason'])
+    return dict(campaign_id=campaign_id, source=source, paused_history=paused_history,
+                exclude_final_failures=exclude_final_failures, message_count=len(messages), events=events,
                 contacts=list(changes.values()), sends=list(bounce_sends.values()),
                 counts=dict(Counter(e['kind'] for e in events if not e['duplicate'])))
 

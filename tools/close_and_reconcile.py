@@ -19,7 +19,7 @@ from tools.reconcile_gmail import connect,snapshot,schema,checks,digest,load_mes
 from tools.stopped_runtime import stopped_runtime
 
 
-def reconcile(conn,messages,timestamp,expected=None):
+def reconcile(conn,messages,timestamp,expected=None,*,exclude_final_failures=False):
     # Every campaign with an immutable accepted attempt is considered; never
     # infer a campaign from subject or apply a report to an unaccepted attempt.
     cids=[r[0] for r in conn.execute("""SELECT DISTINCT s.campaign_id FROM send_attempt_history a
@@ -27,7 +27,7 @@ def reconcile(conn,messages,timestamp,expected=None):
         ORDER BY s.campaign_id""")]
     plans=[]
     for cid in cids:
-        proposal=rec.plan(conn,cid,messages,paused_history=True)
+        proposal=rec.plan(conn,cid,messages,paused_history=True,exclude_final_failures=exclude_final_failures)
         proposal['contacts']=[c for c in proposal['contacts'] if c['new_status'] in {'invalid','unsubscribed'}]
         # Sender policy and temporary/delayed reports never project a bounce.
         for e in proposal['events']:

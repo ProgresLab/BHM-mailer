@@ -8,6 +8,8 @@ Git tracks application source, documentation, branding assets, and the non-secre
 
 ## Setup and Run
 
+Current operator exclusion (2026-10-22): applied531 invalid/0 new unsubscribe after verified final failures;final3608 active/2023 invalid/45 unsubscribed. Explicit manual sending exclusion retains the actual network/policy diagnostic and highest-priority unsubscribe.139 tests,backup/simulation/readback/replay passed;operator remains stopped. [Scope and exceptions](docs/gmail-exclusion-2026-10-22.md). Older runtime statements are historical.
+
 Current correction (2026-10-21): failed+4xx DSNs are final message failures, not delivery delayed and not automatic invalidity. Previous26 labels corrected;77 historical classification corrections,144 later-failure projections,1 new invalid. Final4139 active/1492 invalid/45 unsubscribed;134 tests,backup/simulation/readback/replay passed. Operator remains stopped. [Details](docs/gmail-recheck-2026-10-21.md). Earlier runtime statements are historical.
 
 Current acceptance (2026-10-20, `BHM-GMAIL-FINAL-CLOSE-2026-10-20`): **offline reconciliation and closure complete**.1 new invalid+11 unsubscribed;final4140 active/1491 invalid/45 unsubscribed.2257 relevant MIME reports from2596 fully paginated candidates;2163 duplicates skipped,285 review records unresolved. All previous started queues17/18/28/44 are terminal:1864 pending cancelled,1 proven4xx refusal→smtp_failed;2 legacy4xx rows and all historical send/acceptance/contact dates preserved.128 isolated tests,backups/simulations/full-row readback and no-op replay passed.8000/SMTP/IMAP stopped at entry and remain stopped. No send,new campaign,resume,restart or deploy. [Results and limitations](docs/gmail-final-2026-10-20.md). Older runtime statements below are historical.
@@ -294,3 +296,10 @@ For explicitly authorized closure of all previous queues, `--expected-preserved-
 ## DSN failed disposition and legacy correction
 
 Action determines whether delivery attempts ended:failed with4xx becomes delivery_failed;delayed remains pending at the remote MTA. Network/SERVFAIL/TIMEOUT does not prove a nonexistent address. Policy/authentication/relay failures do not project a bounce in the controlled import. Existing reconciliation appends one linked failed-action-v2 correction for misclassified legacy evidence;original audit rows remain intact and Gmail/IMAP replays deduplicate. Existing stronger bounced_later diagnostics and all accepted-attempt timestamps remain intact. See [RFC3464 section2.3.3](https://www.rfc-editor.org/rfc/rfc3464.html#section-2.3.3).
+
+
+## Explicit operator exclusion after final delivery failure
+
+Default automatic DSN classification is unchanged. When expressly authorized by the operator, use the existing offline Gmail reconciliation with `--exclude-final-failures` in both prepare and apply. Authenticated, exactly matched `Action: failed` reports can then set contact `invalid` as an explicit sending exclusion, including network/policy/final ambiguous diagnostics. The original technical kind and diagnostic remain in the evidence;this does not assert mailbox nonexistence. `unsubscribed` always wins. Genuine delays, untrusted reports and missing exact accepted-attempt matches cannot use this override. It is unavailable to automatic IMAP.
+
+Previously imported technical failure evidence receives a separate linked `verified-final-failure-v1` operator decision once. Its original evidence keys remain deduplication aliases for Gmail/IMAP copies. Existing send diagnostics are preserved;policy/review send projections remain unchanged. Keep the stopped-runtime fence, consistent DB/assets backup, copied simulation, independent readback and no-op replay. A prepared manifest with a different exclusion flag cannot be applied. No queue is resumed or mail sent by this workflow.

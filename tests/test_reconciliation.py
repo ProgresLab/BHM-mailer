@@ -74,6 +74,66 @@ class ReconciliationCase(unittest.TestCase):
         self.assertEqual(rec.classify('failed','5.4.1','smtp; 550 access denied'),('review_microsoft_5.4.1',None))
         self.assertEqual(rec.classify('failed','5.4.1','smtp; 550 5.4.1 Recipient address rejected: Access denied. https://aka.ms/EXOSmtpErrors [MX.prod.outlook.com 2026-10-16]'),('invalid_mailbox_microsoft','invalid'))
 
+    def test_explicit_operator_exclusion_of_previously_imported_final_network_failure(self):
+        from tools.reconcile_gmail import snapshot,validate_delta
+        self.completed();msg=self.dsn('4.0.0','failed','x-error; Network error: Unexpectedly disconnected (BANNER)')
+        self.apply(self.propose([msg]))
+        with db.get_connection() as c:
+            before=snapshot(c)
+            p=rec.plan(c,self.cid,[msg],exclude_final_failures=True)
+            e=p['events'][0]
+            self.assertEqual(e['kind'],'delivery_failed');self.assertFalse(e['duplicate'])
+            self.assertEqual(p['contacts'][0]['new_status'],'invalid');self.assertFalse(p['sends'])
+            self.assertIn('Operator-requested exclusion',p['contacts'][0]['reason'])
+            self.assertEqual(e['base_canonical_key'],rec.canonical_key(self.propose([msg])['events'][0]))
+            rec.apply(c,p);validate_delta(before,snapshot(c),p)
+            after=snapshot(c)
+            for table in before:
+                if table not in {'contacts','execution_events'}:self.assertEqual(before[table],after[table])
+            for explicit in (True,False):
+                alias=copy.deepcopy(msg);alias['id']='another-gmail-copy'
+                replay=rec.plan(c,self.cid,[msg,alias],exclude_final_failures=explicit)
+                self.assertFalse(replay['contacts']);self.assertFalse(replay['sends'])
+                self.assertTrue(all(e['duplicate'] for e in replay['events']))
+                rec.apply(c,replay);self.assertEqual(after,snapshot(c))
+
+    def test_operator_policy_and_unknown_final_diagnostics_exclude_without_rewriting_send(self):
+        from tools.close_and_reconcile import reconcile
+        from tools.reconcile_gmail import snapshot
+        self.completed()
+        with db.get_connection() as c:
+            before=snapshot(c)
+            msgs=[self.dsn('5.7.1','failed','smtp; 550 sender policy'),
+                  self.dsn('5.0.0','failed','smtp; 550 unexplained final refusal')]
+            plans=reconcile(c,msgs,db.utc_now(),exclude_final_failures=True)
+            self.assertEqual(plans[0]['contacts'][0]['new_status'],'invalid')
+            self.assertFalse(plans[0]['sends'])
+            self.assertEqual(snapshot(c)['email_sends'],before['email_sends'])
+            after=snapshot(c);reconcile(c,msgs,db.utc_now(),exclude_final_failures=True)
+            self.assertEqual(snapshot(c),after)
+
+    def test_operator_exclusion_retains_delay_trust_and_exact_match_gates(self):
+        self.completed()
+        delayed=self.dsn('4.0.0','delayed','smtp; delivery delayed')
+        spoof=self.dsn('4.0.0','failed','Network error');spoof['payload']['headers']=[]
+        unmatched=self.dsn('4.0.0','failed','Network error',mid='<unknown@example.test>')
+        with db.get_connection() as c:
+            for msg in (delayed,spoof,unmatched):
+                p=rec.plan(c,self.cid,[msg],exclude_final_failures=True)
+                self.assertFalse(p['contacts'])
+                self.assertNotIn('operator_exclusion',p['events'][0])
+            with self.assertRaisesRegex(ValueError,'explicit offline Gmail'):
+                rec.plan(c,self.cid,[delayed],source='imap',exclude_final_failures=True)
+
+    def test_operator_exclusion_retains_unsubscribe_priority_in_both_orders(self):
+        self.completed();failed=self.dsn('4.0.0','failed','Network error');unsub=self.unsubscribe()
+        with db.get_connection() as c:
+            for msgs in ([failed,unsub],[unsub,failed]):
+                p=rec.plan(c,self.cid,msgs,exclude_final_failures=True)
+                self.assertEqual(p['contacts'][0]['new_status'],'unsubscribed')
+            rec.apply(c,rec.plan(c,self.cid,[unsub],exclude_final_failures=True))
+            self.assertFalse(rec.plan(c,self.cid,[failed],exclude_final_failures=True)['contacts'])
+
     def test_connector_null_headers_fail_closed_and_do_not_abort_scan(self):
         self.completed()
         msg=self.dsn()
